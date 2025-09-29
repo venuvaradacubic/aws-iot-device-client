@@ -1,40 +1,19 @@
-// Copyright Amazon.com, Inc.                 {
-                    routeMatcher.reset(new RouteMatcher());
-                    // PayloadTagger is a static utility class, no need to instantiateits affiliates. All Rights Reserved.
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "LocalMqttBridgeFeature.h"
-#i                                        if (connection)
-                            {
-                                auto messageHandler = 
-                                    [this](const Aws::Crt::Mqtt::MqttConnection&,
-                                           const Aws::Crt::String& receivedOnTopic,
-                                           const Aws::Crt::ByteBuf& payload) -> void {
-                                        this->handleAwsMessage(receivedOnTopic.c_str(), 
-                                                              reinterpret_cast<const char*>(payload.buffer), 
-                                                              payload.len);
-                                    };              auto messageHandler = 
-                                    [this](const Aws::Crt::Mqtt::MqttConnection&,
-                                           const Aws::Crt::String& receivedOnTopic,
-                                           const Aws::Crt::ByteBuf& payload) -> void {
-                                        this->handleAwsMessage(receivedOnTopic.c_str(), 
-                                                              reinterpret_cast<const char*>(payload.buffer), 
-                                                              payload.len);
-                                    };              auto messageHandler = 
-                                    [this](const Aws::Crt::Mqtt::MqttConnection&,
-                                           const Aws::Crt::String& receivedOnTopic,
-                                           const Aws::Crt::ByteBuf& payload) -> void {
-                                        this->handleAwsMessage(receivedOnTopic.c_str(), 
-                                                              reinterpret_cast<const char*>(payload.buffer), 
-                                                              payload.len);
-                                    };logging/LoggerFactory.h"
 #include "ConfigModel.h"
+#include "RouteMatcher.h"
+#include "PayloadTagger.h"
+#include "LoopGuard.h"
+#include "Queue.h"
+#include "LocalClient.h"
+#include "../logging/LoggerFactory.h"
 #include <aws/crt/mqtt/MqttConnection.h>
-#include <iostream>
 #include <chrono>
 #include <functional>
-#include <mutex>
 #include <memory>
+#include <mutex>
 
 using namespace std;
 using namespace Aws::Iot::DeviceClient::LocalMqttBridge;
@@ -55,7 +34,6 @@ namespace Aws
                 LocalMqttBridgeFeature::LocalMqttBridgeFeature()
                 {
                     routeMatcher = std::make_unique<RouteMatcher>();
-                    // PayloadTagger is a static utility class, no need to instantiate
                 }
 
                 LocalMqttBridgeFeature::~LocalMqttBridgeFeature()
@@ -73,8 +51,8 @@ namespace Aws
                 }
 
                 int LocalMqttBridgeFeature::init(std::shared_ptr<SharedCrtResourceManager> manager,
-                                               std::shared_ptr<ClientBaseNotifier> notifier,
-                                               const PlainConfig& config)
+                                                std::shared_ptr<ClientBaseNotifier> notifier,
+                                                const PlainConfig& config)
                 {
                     resourceManager = manager;
                     baseNotifier = notifier;
@@ -135,10 +113,8 @@ namespace Aws
                     running = true;
                     startTime = std::chrono::steady_clock::now();
 
-                    localToAwsThread.reset(new std::thread(
-                        &LocalMqttBridgeFeature::localToAwsThreadFunction, this));
-                    awsToLocalThread.reset(new std::thread(
-                        &LocalMqttBridgeFeature::awsToLocalThreadFunction, this));
+                    localToAwsThread.reset(new std::thread(&LocalMqttBridgeFeature::localToAwsThreadFunction, this));
+                    awsToLocalThread.reset(new std::thread(&LocalMqttBridgeFeature::awsToLocalThreadFunction, this));
 
                     LOGM_INFO(TAG, "%s", "Local MQTT Bridge started successfully");
                     return Feature::SUCCESS;
@@ -286,101 +262,77 @@ namespace Aws
 
                 bool LocalMqttBridgeFeature::setupConnections()
                 {
-                    // Start local client
                     localClient->start();
-
-                    // Connect to local broker
-                    bool connected = localClient->connect(
+                    bool localConnected = localClient->connect(
                         bridgeConfig.local.host,
                         bridgeConfig.local.port,
-                        60, // keepAlive seconds
+                        60,
                         bridgeConfig.local.username,
-                        bridgeConfig.local.password
-                    );
-
-                    if (!connected)
+                        bridgeConfig.local.password);
+                    if (!localConnected)
                     {
                         LOGM_ERROR(TAG, "%s", "Failed to connect to local MQTT broker");
                         return false;
                     }
-
-                    // Set up route matcher
-                    std::string thingName = getThingName();
-                    routeMatcher->addRoutes(bridgeConfig.routes, thingName);
-
-                    // Subscribe to local topics for "up" routes
-                    for (const auto& route : bridgeConfig.routes)
+                    std::string tn = getThingName();
+                    routeMatcher->addRoutes(bridgeConfig.routes, tn);
+                    for (const auto &route : bridgeConfig.routes)
                     {
                         if (route.direction == "up" && !route.localTopic.empty())
                         {
-                            std::string expandedTopic = expandTopic(route.localTopic, thingName);
-                            if (!localClient->subscribe(expandedTopic, route.qos))
+                            std::string expanded = expandTopic(route.localTopic, tn);
+                            if (!localClient->subscribe(expanded, route.qos))
                             {
-                                LOGM_WARN(TAG, "Failed to subscribe to local topic: %s", expandedTopic.c_str());
+                                LOGM_WARN(TAG, "Failed to subscribe to local topic: %s", expanded.c_str());
                             }
                             else
                             {
-                                LOGM_INFO(TAG, "Subscribed to local topic: %s", expandedTopic.c_str());
+                                LOGM_INFO(TAG, "Subscribed to local topic: %s", expanded.c_str());
                             }
                         }
                     }
-
-                    // Subscribe to AWS IoT topics for "down" routes
-                    for (const auto& route : bridgeConfig.routes)
+                    auto connection = resourceManager->getConnection();
+                    if (!connection)
+                    {
+                        LOGM_ERROR(TAG, "%s", "AWS IoT connection unavailable during bridge setup");
+                        return false;
+                    }
+                    for (const auto &route : bridgeConfig.routes)
                     {
                         if (route.direction == "down" && !route.awsTopic.empty())
                         {
-                            std::string expandedTopic = expandTopic(route.awsTopic, thingName);
-                            
-                            // Subscribe using AWS IoT connection
-                            auto connection = resourceManager->getConnection();
-                            if (connection)
-                            {
-                                Aws::Crt::Mqtt::MqttConnection::OnMessageReceivedHandler messageHandler = 
-                                    [this](Aws::Crt::Mqtt::MqttConnection&,
-                                           const Aws::Crt::String& receivedOnTopic,
-                                           const Aws::Crt::ByteBuf& payload,
-                                           bool,
-                                           Aws::Crt::Mqtt::QOS,
-                                           bool) {
-                                        this->handleAwsMessage(receivedTopic.c_str(), 
-                                                              reinterpret_cast<const char*>(payload.buffer), 
-                                                              payload.len);
-                                    };
-                                
-                                auto onSubAck = [this, expandedTopic](const Aws::Crt::Mqtt::MqttConnection&, 
-                                                                     uint16_t packetId, 
-                                                                     const Aws::Crt::String&,
-                                                                     Aws::Crt::Mqtt::QOS qos, 
-                                                                     int errorCode) -> void {
-                                    if (errorCode == 0)
-                                    {
-                                        LOGM_INFO(TAG, "Successfully subscribed to AWS IoT topic: %s", expandedTopic.c_str());
-                                    }
-                                    else
-                                    {
-                                        LOGM_ERROR(TAG, "Failed to subscribe to AWS IoT topic %s, error: %d", 
-                                                  expandedTopic.c_str(), errorCode);
-                                    }
-                                };
-                                
-                                uint16_t packetId = connection->Subscribe(expandedTopic.c_str(), 
-                                                                         static_cast<Aws::Crt::Mqtt::QOS>(route.qos),
-                                                                         messageHandler, 
-                                                                         onSubAck);
-                                
-                                if (packetId == 0)
+                            std::string expandedAws = expandTopic(route.awsTopic, tn);
+                            Aws::Crt::Mqtt::MqttConnection::OnMessageReceivedHandler handler =
+                                [this](Aws::Crt::Mqtt::MqttConnection &,
+                                       const Aws::Crt::String &receivedOnTopic,
+                                       const Aws::Crt::ByteBuf &payload,
+                                       bool, Aws::Crt::Mqtt::QOS, bool)
                                 {
-                                    LOGM_ERROR(TAG, "Failed to initiate subscription to AWS IoT topic: %s", expandedTopic.c_str());
-                                }
-                            }
-                            else
+                                    this->handleAwsMessage(receivedOnTopic.c_str(),
+                                                          std::string(reinterpret_cast<const char *>(payload.buffer), payload.len));
+                                };
+                            auto onSubAck = [expandedAws](const Aws::Crt::Mqtt::MqttConnection &,
+                                                          uint16_t, const Aws::Crt::String &,
+                                                          Aws::Crt::Mqtt::QOS, int errorCode)
                             {
-                                LOGM_ERROR(TAG, "No AWS IoT connection available for subscription to: %s", expandedTopic.c_str());
+                                if (errorCode == 0)
+                                {
+                                    LOGM_INFO(LocalMqttBridgeFeature::TAG, "Successfully subscribed to AWS IoT topic: %s", expandedAws.c_str());
+                                }
+                                else
+                                {
+                                    LOGM_ERROR(LocalMqttBridgeFeature::TAG, "Failed to subscribe to AWS IoT topic %s, error: %d", expandedAws.c_str(), errorCode);
+                                }
+                            };
+                            uint16_t packetId = connection->Subscribe(expandedAws.c_str(),
+                                                                     static_cast<Aws::Crt::Mqtt::QOS>(route.qos),
+                                                                     handler, onSubAck);
+                            if (packetId == 0)
+                            {
+                                LOGM_ERROR(TAG, "Failed to initiate subscription to AWS IoT topic: %s", expandedAws.c_str());
                             }
                         }
                     }
-
                     return true;
                 }
 
@@ -409,17 +361,77 @@ namespace Aws
                                 continue;
                             }
 
-                            // Find matching route
-                            const Route* matchedRoute = routeMatcher->matchUp(message.topic);
+                            // Find matching route (with variable capture for '+')
+                            auto matchResult = routeMatcher->matchUpWithVariables(message.topic);
+                            const Route* matchedRoute = matchResult ? matchResult->route : nullptr;
                             if (matchedRoute)
                             {
-                                // Tag payload to prevent loops
-                                std::string taggedPayload = PayloadTagger::tagPayload(
-                                    message.payload, "up"
-                                );
+                                // Throttling logic: if route has throttleSeconds, decide send/defer
+                                bool throttled = false;
+                                std::string effectivePayload = message.payload;
+                                if (matchedRoute->throttleSeconds > 0)
+                                {
+                                    auto now = std::chrono::steady_clock::now();
+                                    std::string throttleKey = matchedRoute->awsTopic; // use aws topic template as key
+                                    {
+                                        static std::mutex throttleMutex; // local static to avoid adding member until metrics phase
+                                        static std::unordered_map<std::string, std::pair<std::chrono::steady_clock::time_point, std::string>> throttleMap; // lastSent, cachedPayload
+                                        std::lock_guard<std::mutex> lock(throttleMutex);
+                                        auto &entry = throttleMap[throttleKey];
+                                        auto last = entry.first;
+                                        if (last.time_since_epoch().count() != 0)
+                                        {
+                                            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last).count();
+                                            if (elapsed < matchedRoute->throttleSeconds)
+                                            {
+                                                // cache latest payload and skip send
+                                                entry.second = message.payload;
+                                                throttled = true;
+                                            }
+                                            else
+                                            {
+                                                // send (using newest cached if present)
+                                                if (!entry.second.empty())
+                                                {
+                                                    effectivePayload = entry.second;
+                                                    entry.second.clear();
+                                                }
+                                                entry.first = now;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // first send
+                                            entry.first = now;
+                                            entry.second.clear();
+                                        }
+                                    }
+                                }
 
-                                // Expand AWS topic
-                                std::string awsTopic = expandTopic(matchedRoute->awsTopic, getThingName());
+                                if (throttled)
+                                {
+                                    continue; // skip publish this cycle
+                                }
+                                // Tag payload to prevent loops
+                                std::string taggedPayload = PayloadTagger::tagPayload(effectivePayload, "up");
+
+                                // Expand AWS topic including ${matchN} variables
+                                std::string awsTopic = matchedRoute->awsTopic;
+                                // Replace thingName
+                                awsTopic = expandTopic(awsTopic, getThingName());
+                                if (matchResult)
+                                {
+                                    for (const auto &kv : matchResult->variables)
+                                    {
+                                        std::string placeholder = "${" + kv.first + "}";
+                                        size_t pos = 0;
+                                        while ((pos = awsTopic.find(placeholder, pos)) != std::string::npos)
+                                        {
+                                            awsTopic.replace(pos, placeholder.length(), kv.second);
+                                            pos += kv.second.length();
+                                        }
+                                    }
+                                }
 
                                 // Publish to AWS IoT Core using resourceManager
                                 auto connection = resourceManager->getConnection();
@@ -430,9 +442,7 @@ namespace Aws
                                         taggedPayload.size()
                                     );
                                     
-                                    auto onPubAck = [this, awsTopic](Aws::Crt::Mqtt::MqttConnection&, 
-                                                                        uint16_t packetId, 
-                                                                        int errorCode) {
+                                    auto onPubAck = [awsTopic](Aws::Crt::Mqtt::MqttConnection&, uint16_t, int errorCode) {
                                         if (errorCode == 0)
                                         {
                                             LOGM_DEBUG(TAG, "Successfully published to AWS IoT topic: %s", 
@@ -445,8 +455,14 @@ namespace Aws
                                         }
                                     };
                                     
+                                    int desiredQos = matchedRoute->qos;
+                                    if (desiredQos == 2)
+                                    {
+                                        LOGM_WARN(TAG, "QoS 2 requested for topic %s, downgrading to QoS 1", awsTopic.c_str());
+                                        desiredQos = 1;
+                                    }
                                     uint16_t packetId = connection->Publish(awsTopic.c_str(),
-                                                                           static_cast<Aws::Crt::Mqtt::QOS>(matchedRoute->qos),
+                                                                           static_cast<Aws::Crt::Mqtt::QOS>(desiredQos),
                                                                            false, // retain
                                                                            payloadBuf,
                                                                            onPubAck);

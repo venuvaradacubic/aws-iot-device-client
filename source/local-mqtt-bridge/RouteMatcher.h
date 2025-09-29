@@ -55,6 +55,9 @@ namespace Aws
                      */
                     const Route* matchUp(const std::string& localTopic) const;
 
+                    // Find up route and capture '+' wildcard variables (match1, match2, ...)
+                    std::unique_ptr<MatchResult> matchUpWithVariables(const std::string& localTopic) const;
+
                     /**
                      * @brief Find down route for AWS topic with wildcard matching
                      * @param awsTopic The AWS topic to match against down route patterns
@@ -82,6 +85,7 @@ namespace Aws
                     };
 
                     std::vector<Route> upRoutes;
+                    std::vector<CompiledRoute> upCompiled; // for wildcard capture on up routes
                     std::vector<CompiledRoute> downRoutes; // Compiled patterns for AWS topics
                     std::string thingName;
 
@@ -101,6 +105,8 @@ namespace Aws
                      * @return true if topic matches pattern
                      */
                     bool matchesExact(const std::string& topic, const std::string& pattern) const;
+
+                    std::regex compileLocalTopicPattern(const std::string& localTopic, std::vector<std::string>& captureNames) const;
                 };
 
             } // namespace LocalMqttBridge

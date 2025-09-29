@@ -24,6 +24,7 @@ namespace Aws
                 {
                     this->thingName = thingName;
                     upRoutes.clear();
+                    upCompiled.clear();
                     downRoutes.clear();
 
                     for (const auto& route : routes)
@@ -31,6 +32,21 @@ namespace Aws
                         if (route.direction == "up")
                         {
                             upRoutes.push_back(route);
+                            // Build compiled pattern if contains '+' for variable capture
+                            if (route.localTopic.find('+') != std::string::npos)
+                            {
+                                CompiledRoute compiled(route);
+                                try
+                                {
+                                    compiled.pattern = compileLocalTopicPattern(route.localTopic, compiled.captureNames);
+                                    upCompiled.push_back(std::move(compiled));
+                                    LOGM_DEBUG(TAG, "Compiled up route wildcard pattern for local topic: %s", route.localTopic.c_str());
+                                }
+                                catch(const std::exception& e)
+                                {
+                                    LOGM_WARN(TAG, "Failed to compile up route pattern %s: %s", route.localTopic.c_str(), e.what());
+                                }
+                            }
                         }
                         else if (route.direction == "down")
                         {
@@ -61,6 +77,31 @@ namespace Aws
                         }
                     }
                     return nullptr;
+                }
+
+                std::unique_ptr<MatchResult> RouteMatcher::matchUpWithVariables(const std::string& localTopic) const
+                {
+                    // First attempt simple exact (including '+' wildcard matching) without capture
+                    const Route* base = matchUp(localTopic);
+                    if (base && base->localTopic.find('+') == std::string::npos)
+                    {
+                        return std::unique_ptr<MatchResult>(new MatchResult(base));
+                    }
+                    // Try compiled wildcard patterns for capture
+                    for (const auto &compiledRoute : upCompiled)
+                    {
+                        std::smatch matches;
+                        if (std::regex_match(localTopic, matches, compiledRoute.pattern))
+                        {
+                            std::map<std::string, std::string> vars;
+                            for (size_t i = 1; i < matches.size() && (i - 1) < compiledRoute.captureNames.size(); ++i)
+                            {
+                                vars[compiledRoute.captureNames[i-1]] = matches[i].str();
+                            }
+                            return std::unique_ptr<MatchResult>(new MatchResult(&compiledRoute.route, vars));
+                        }
+                    }
+                    return std::unique_ptr<MatchResult>(new MatchResult(nullptr));
                 }
 
                 std::unique_ptr<MatchResult> RouteMatcher::matchDown(const std::string& awsTopic) const
@@ -193,6 +234,34 @@ namespace Aws
                     }
                     
                     return true;
+                }
+
+                std::regex RouteMatcher::compileLocalTopicPattern(const std::string& localTopic, std::vector<std::string>& captureNames) const
+                {
+                    captureNames.clear();
+                    std::string pattern;
+                    int matchCount = 0;
+                    for(char c : localTopic)
+                    {
+                        if (c == '+')
+                        {
+                            matchCount++;
+                            captureNames.push_back("match" + std::to_string(matchCount));
+                            pattern += "([^/]+)";
+                        }
+                        else if (c == '.' || c == '^' || c == '$' || c == '*' || c == '?' || 
+                                 c == '[' || c == ']' || c == '{' || c == '}' || c == '(' || 
+                                 c == ')' || c == '|' || c == '\\')
+                        {
+                            pattern += '\\';
+                            pattern += c;
+                        }
+                        else
+                        {
+                            pattern += c;
+                        }
+                    }
+                    return std::regex(pattern);
                 }
 
             } // namespace LocalMqttBridge

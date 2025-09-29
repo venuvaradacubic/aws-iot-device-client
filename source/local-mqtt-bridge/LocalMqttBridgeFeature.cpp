@@ -33,7 +33,8 @@ namespace Aws
 
                 LocalMqttBridgeFeature::LocalMqttBridgeFeature()
                 {
-                    routeMatcher = std::make_unique<RouteMatcher>();
+                    // Avoid std::make_unique to keep compatibility with C++11 (project may compile with -std=c++11)
+                    routeMatcher = std::unique_ptr<RouteMatcher>(new RouteMatcher());
                 }
 
                 LocalMqttBridgeFeature::~LocalMqttBridgeFeature()
@@ -302,7 +303,8 @@ namespace Aws
                         if (route.direction == "down" && !route.awsTopic.empty())
                         {
                             std::string expandedAws = expandTopic(route.awsTopic, tn);
-                            Aws::Crt::Mqtt::MqttConnection::OnMessageReceivedHandler handler =
+                            // Updated handler type: alias resides in Aws::Crt::Mqtt namespace, not as a nested type of MqttConnection in some SDK versions
+                            Aws::Crt::Mqtt::OnMessageReceivedHandler handler =
                                 [this](Aws::Crt::Mqtt::MqttConnection &,
                                        const Aws::Crt::String &receivedOnTopic,
                                        const Aws::Crt::ByteBuf &payload,

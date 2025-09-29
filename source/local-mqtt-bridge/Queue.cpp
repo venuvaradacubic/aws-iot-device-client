@@ -146,7 +146,8 @@ namespace Aws
                     std::queue<QueuedMessage> empty;
                     queue.swap(empty);
                     recentHeartbeats.clear();
-                    LOGM_INFO(TAG, "Queue cleared");
+                    // Add trailing empty string to satisfy variadic macro expecting additional args
+                    LOGM_INFO(TAG, "Queue cleared", "");
                 }
 
                 size_t Queue::getMaxSize() const

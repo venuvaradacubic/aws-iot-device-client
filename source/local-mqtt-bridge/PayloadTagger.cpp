@@ -25,31 +25,32 @@ namespace Aws
                 {
                     if (!isValidJson(payload))
                     {
-                        // Non-JSON payload, return as-is
-                        LOGM_DEBUG(TAG, "Payload is not JSON, skipping tagging");
+                        // Non-JSON payload, return as-is. Macro expects variadic args; supply empty string.
+                        LOGM_DEBUG(TAG, "Payload is not JSON, skipping tagging", "");
                         return payload;
                     }
 
                     if (isTagged(payload))
                     {
                         // Already tagged, don't modify
-                        LOGM_DEBUG(TAG, "Payload already tagged with bridge direction");
+                        LOGM_DEBUG(TAG, "Payload already tagged with bridge direction", "");
                         return payload;
                     }
 
                     try
                     {
-                        JsonObject jsonObject(payload);
+                        Aws::Crt::String crtPayload(payload.c_str());
+                        JsonObject jsonObject(crtPayload);
                         if (!jsonObject.WasParseSuccessful())
                         {
-                            LOGM_DEBUG(TAG, "Failed to parse JSON payload for tagging");
+                            LOGM_DEBUG(TAG, "Failed to parse JSON payload for tagging", "");
                             return payload;
                         }
 
                         // Add bridge direction tag
-                        jsonObject.WithString(BRIDGE_FIELD, direction);
-                        
-                        std::string taggedPayload = jsonObject.View().WriteCompact();
+                        Aws::Crt::String crtDirection(direction.c_str());
+                        jsonObject.WithString(BRIDGE_FIELD, crtDirection);
+                        std::string taggedPayload(jsonObject.View().WriteCompact().c_str());
                         LOGM_DEBUG(TAG, "Tagged payload with direction: %s", direction.c_str());
                         return taggedPayload;
                     }
@@ -69,7 +70,8 @@ namespace Aws
 
                     try
                     {
-                        JsonObject jsonObject(payload);
+                        Aws::Crt::String crtPayload(payload.c_str());
+                        JsonObject jsonObject(crtPayload);
                         if (!jsonObject.WasParseSuccessful())
                         {
                             return false;
@@ -93,7 +95,8 @@ namespace Aws
 
                     try
                     {
-                        JsonObject jsonObject(payload);
+                        Aws::Crt::String crtPayload(payload.c_str());
+                        JsonObject jsonObject(crtPayload);
                         if (!jsonObject.WasParseSuccessful())
                         {
                             return "";
@@ -133,7 +136,8 @@ namespace Aws
                     // Try to parse as JSON
                     try
                     {
-                        JsonObject jsonObject(payload);
+                        Aws::Crt::String crtPayload(payload.c_str());
+                        JsonObject jsonObject(crtPayload);
                         return jsonObject.WasParseSuccessful();
                     }
                     catch (const std::exception&)

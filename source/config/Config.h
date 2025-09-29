@@ -476,6 +476,73 @@ namespace Aws
                     mutable std::vector<SensorSettings> settings;
                 };
                 SensorPublish sensorPublish;
+
+#if defined(LOCAL_MQTT_BRIDGE)
+                struct LocalMqttBridge : public LoadableFromJsonAndCliAndEnvironment
+                {
+                    bool LoadFromJson(const Crt::JsonView &json) override;
+                    bool LoadFromCliArgs(const CliArgs &cliArgs) override;
+                    bool LoadFromEnvironment() override { return true; }
+                    bool Validate() const override;
+                    /** Serialize LocalMqttBridge feature To Json Object **/
+                    void SerializeToObject(Crt::JsonObject &object) const;
+
+                    struct LocalBroker
+                    {
+                        std::string host{"127.0.0.1"};
+                        int port{1883};
+                        bool useTLS{false};
+                        std::string username;
+                        std::string password;
+                    };
+
+                    struct Route
+                    {
+                        std::string direction; // "up" or "down"
+                        std::string localTopic;
+                        std::string awsTopic;
+                        std::string localTopicTemplate;
+                        int qos{0};
+                        int throttleSeconds{0}; // For up routes only
+                    };
+
+                    struct QueueConfig
+                    {
+                        int maxInMemory{200};
+                        bool dedupeHeartbeat{true};
+                    };
+
+                    struct LoopGuardConfig
+                    {
+                        int ttlSeconds{5};
+                        int maxEntries{512};
+                    };
+
+                    struct MetricsConfig
+                    {
+                        int publishIntervalSec{60};
+                        std::string awsTopic;
+                        bool enabled{true};
+                    };
+
+                    static constexpr char CLI_ENABLE_LOCAL_MQTT_BRIDGE[] = "--enable-local-mqtt-bridge";
+                    static constexpr char JSON_KEY_LOCAL_MQTT_BRIDGE[] = "localMqttBridge";
+                    static constexpr char JSON_KEY_ENABLED[] = "enabled";
+                    static constexpr char JSON_KEY_LOCAL[] = "local";
+                    static constexpr char JSON_KEY_ROUTES[] = "routes";
+                    static constexpr char JSON_KEY_QUEUE[] = "queue";
+                    static constexpr char JSON_KEY_LOOP_GUARD[] = "loopGuard";
+                    static constexpr char JSON_KEY_METRICS[] = "metrics";
+
+                    bool enabled{false};
+                    LocalBroker local;
+                    std::vector<Route> routes;
+                    QueueConfig queue;
+                    LoopGuardConfig loopGuard;
+                    MetricsConfig metrics;
+                };
+                LocalMqttBridge localMqttBridge;
+#endif
             };
 
             class Config

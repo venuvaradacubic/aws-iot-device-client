@@ -240,6 +240,16 @@ bool PlainConfig::LoadFromJson(const Crt::JsonView &json)
         sensorPublish = temp;
     }
 
+#if defined(LOCAL_MQTT_BRIDGE)
+    jsonKey = LocalMqttBridge::JSON_KEY_LOCAL_MQTT_BRIDGE;
+    if (json.ValueExists(jsonKey))
+    {
+        LocalMqttBridge temp;
+        temp.LoadFromJson(json.GetJsonObject(jsonKey));
+        localMqttBridge = temp;
+    }
+#endif
+
     return true;
 }
 
@@ -284,6 +294,9 @@ bool PlainConfig::LoadFromCliArgs(const CliArgs &cliArgs)
                          deviceDefender.LoadFromCliArgs(cliArgs) && fleetProvisioning.LoadFromCliArgs(cliArgs) &&
                          pubSub.LoadFromCliArgs(cliArgs) && sampleShadow.LoadFromCliArgs(cliArgs) &&
                          configShadow.LoadFromCliArgs(cliArgs) && secureElement.LoadFromCliArgs(cliArgs);
+#endif
+#if defined(LOCAL_MQTT_BRIDGE)
+    loadFeatureCliArgs = loadFeatureCliArgs && localMqttBridge.LoadFromCliArgs(cliArgs);
 #endif
     return loadFeatureCliArgs;
 }
@@ -2495,6 +2508,284 @@ void PlainConfig::SensorPublish::SerializeToObject(Crt::JsonObject &object) cons
     object.WithArray(JSON_SENSORS, sensors);
 }
 
+#if defined(LOCAL_MQTT_BRIDGE)
+constexpr char PlainConfig::LocalMqttBridge::CLI_ENABLE_LOCAL_MQTT_BRIDGE[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_LOCAL_MQTT_BRIDGE[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ENABLED[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_LOCAL[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ROUTES[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_QUEUE[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_LOOP_GUARD[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_METRICS[];
+
+bool PlainConfig::LocalMqttBridge::LoadFromJson(const Crt::JsonView &json)
+{
+    if (json.ValueExists(JSON_KEY_ENABLED))
+    {
+        enabled = json.GetBool(JSON_KEY_ENABLED);
+    }
+
+    if (json.ValueExists(JSON_KEY_LOCAL) && json.GetJsonObject(JSON_KEY_LOCAL).IsObject())
+    {
+        const auto localJson = json.GetJsonObject(JSON_KEY_LOCAL);
+        if (localJson.ValueExists("host"))
+        {
+            local.host = localJson.GetString("host").c_str();
+        }
+        if (localJson.ValueExists("port"))
+        {
+            local.port = localJson.GetInteger("port");
+        }
+        if (localJson.ValueExists("useTLS"))
+        {
+            local.useTLS = localJson.GetBool("useTLS");
+        }
+        if (localJson.ValueExists("username"))
+        {
+            local.username = localJson.GetString("username").c_str();
+        }
+        if (localJson.ValueExists("password"))
+        {
+            local.password = localJson.GetString("password").c_str();
+        }
+    }
+
+    if (json.ValueExists(JSON_KEY_ROUTES) && json.GetJsonObject(JSON_KEY_ROUTES).IsListType())
+    {
+        for (const auto &routeEntry : json.GetArray(JSON_KEY_ROUTES))
+        {
+            Route route;
+            if (routeEntry.ValueExists("direction"))
+            {
+                route.direction = routeEntry.GetString("direction").c_str();
+            }
+            if (routeEntry.ValueExists("localTopic"))
+            {
+                route.localTopic = routeEntry.GetString("localTopic").c_str();
+            }
+            if (routeEntry.ValueExists("awsTopic"))
+            {
+                route.awsTopic = routeEntry.GetString("awsTopic").c_str();
+            }
+            if (routeEntry.ValueExists("localTopicTemplate"))
+            {
+                route.localTopicTemplate = routeEntry.GetString("localTopicTemplate").c_str();
+            }
+            if (routeEntry.ValueExists("qos"))
+            {
+                route.qos = routeEntry.GetInteger("qos");
+            }
+            if (routeEntry.ValueExists("throttleSeconds"))
+            {
+                route.throttleSeconds = routeEntry.GetInteger("throttleSeconds");
+            }
+            routes.push_back(route);
+        }
+    }
+
+    if (json.ValueExists(JSON_KEY_QUEUE) && json.GetJsonObject(JSON_KEY_QUEUE).IsObject())
+    {
+        const auto queueJson = json.GetJsonObject(JSON_KEY_QUEUE);
+        if (queueJson.ValueExists("maxInMemory"))
+        {
+            queue.maxInMemory = queueJson.GetInteger("maxInMemory");
+        }
+        if (queueJson.ValueExists("dedupeHeartbeat"))
+        {
+            queue.dedupeHeartbeat = queueJson.GetBool("dedupeHeartbeat");
+        }
+    }
+
+    if (json.ValueExists(JSON_KEY_LOOP_GUARD) && json.GetJsonObject(JSON_KEY_LOOP_GUARD).IsObject())
+    {
+        const auto loopGuardJson = json.GetJsonObject(JSON_KEY_LOOP_GUARD);
+        if (loopGuardJson.ValueExists("ttlSeconds"))
+        {
+            loopGuard.ttlSeconds = loopGuardJson.GetInteger("ttlSeconds");
+        }
+        if (loopGuardJson.ValueExists("maxEntries"))
+        {
+            loopGuard.maxEntries = loopGuardJson.GetInteger("maxEntries");
+        }
+    }
+
+    if (json.ValueExists(JSON_KEY_METRICS) && json.GetJsonObject(JSON_KEY_METRICS).IsObject())
+    {
+        const auto metricsJson = json.GetJsonObject(JSON_KEY_METRICS);
+        if (metricsJson.ValueExists("publishIntervalSec"))
+        {
+            metrics.publishIntervalSec = metricsJson.GetInteger("publishIntervalSec");
+        }
+        if (metricsJson.ValueExists("awsTopic"))
+        {
+            metrics.awsTopic = metricsJson.GetString("awsTopic").c_str();
+        }
+        if (metricsJson.ValueExists("enabled"))
+        {
+            metrics.enabled = metricsJson.GetBool("enabled");
+        }
+    }
+
+    return true;
+}
+
+bool PlainConfig::LocalMqttBridge::LoadFromCliArgs(const CliArgs &cliArgs)
+{
+    if (cliArgs.count(CLI_ENABLE_LOCAL_MQTT_BRIDGE))
+    {
+        enabled = cliArgs.at(CLI_ENABLE_LOCAL_MQTT_BRIDGE).compare("true") == 0;
+    }
+    return true;
+}
+
+bool PlainConfig::LocalMqttBridge::Validate() const
+{
+    if (!enabled)
+    {
+        return true; // Nothing to validate if disabled
+    }
+
+    // Validate local broker config
+    if (local.host.empty())
+    {
+        LOGM_ERROR(Config::TAG, "*** %s: Local MQTT Bridge local host cannot be empty", DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    if (local.port <= 0 || local.port > 65535)
+    {
+        LOGM_ERROR(Config::TAG, "*** %s: Local MQTT Bridge port must be between 1 and 65535", DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    // Validate routes
+    for (const auto &route : routes)
+    {
+        if (route.direction != "up" && route.direction != "down")
+        {
+            LOGM_ERROR(Config::TAG, "*** %s: Route direction must be 'up' or 'down'", DeviceClient::DC_FATAL_ERROR);
+            return false;
+        }
+
+        if (route.direction == "up" && (route.localTopic.empty() || route.awsTopic.empty()))
+        {
+            LOGM_ERROR(Config::TAG, "*** %s: Up route must have both localTopic and awsTopic", DeviceClient::DC_FATAL_ERROR);
+            return false;
+        }
+
+        if (route.direction == "down" && (route.awsTopic.empty() || route.localTopicTemplate.empty()))
+        {
+            LOGM_ERROR(Config::TAG, "*** %s: Down route must have both awsTopic and localTopicTemplate", DeviceClient::DC_FATAL_ERROR);
+            return false;
+        }
+
+        if (route.qos < 0 || route.qos > 1)
+        {
+            LOGM_ERROR(Config::TAG, "*** %s: Route QoS must be 0 or 1", DeviceClient::DC_FATAL_ERROR);
+            return false;
+        }
+
+        if (route.throttleSeconds < 0)
+        {
+            LOGM_ERROR(Config::TAG, "*** %s: Route throttleSeconds must be non-negative", DeviceClient::DC_FATAL_ERROR);
+            return false;
+        }
+    }
+
+    // Validate queue config
+    if (queue.maxInMemory < 0)
+    {
+        LOGM_ERROR(Config::TAG, "*** %s: Queue maxInMemory must be non-negative", DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    // Validate loop guard config
+    if (loopGuard.ttlSeconds <= 0)
+    {
+        LOGM_ERROR(Config::TAG, "*** %s: LoopGuard ttlSeconds must be positive", DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    if (loopGuard.maxEntries <= 0)
+    {
+        LOGM_ERROR(Config::TAG, "*** %s: LoopGuard maxEntries must be positive", DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    // Validate metrics config
+    if (metrics.publishIntervalSec < 0)
+    {
+        LOGM_ERROR(Config::TAG, "*** %s: Metrics publishIntervalSec must be non-negative", DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    return true;
+}
+
+void PlainConfig::LocalMqttBridge::SerializeToObject(Crt::JsonObject &object) const
+{
+    object.WithBool(JSON_KEY_ENABLED, enabled);
+    
+    // Local broker config
+    Crt::JsonObject localObj;
+    localObj.WithString("host", local.host);
+    localObj.WithInteger("port", local.port);
+    localObj.WithBool("useTLS", local.useTLS);
+    if (!local.username.empty())
+    {
+        localObj.WithString("username", local.username);
+    }
+    if (!local.password.empty())
+    {
+        localObj.WithString("password", local.password);
+    }
+    object.WithObject(JSON_KEY_LOCAL, localObj);
+
+    // Routes
+    Aws::Crt::Vector<Aws::Crt::JsonObject> routesArray;
+    for (const auto &route : routes)
+    {
+        Crt::JsonObject routeObj;
+        routeObj.WithString("direction", route.direction);
+        if (!route.localTopic.empty())
+        {
+            routeObj.WithString("localTopic", route.localTopic);
+        }
+        if (!route.awsTopic.empty())
+        {
+            routeObj.WithString("awsTopic", route.awsTopic);
+        }
+        if (!route.localTopicTemplate.empty())
+        {
+            routeObj.WithString("localTopicTemplate", route.localTopicTemplate);
+        }
+        routeObj.WithInteger("qos", route.qos);
+        routeObj.WithInteger("throttleSeconds", route.throttleSeconds);
+        routesArray.push_back(routeObj);
+    }
+    object.WithArray(JSON_KEY_ROUTES, routesArray);
+
+    // Queue config
+    Crt::JsonObject queueObj;
+    queueObj.WithInteger("maxInMemory", queue.maxInMemory);
+    queueObj.WithBool("dedupeHeartbeat", queue.dedupeHeartbeat);
+    object.WithObject(JSON_KEY_QUEUE, queueObj);
+
+    // LoopGuard config
+    Crt::JsonObject loopGuardObj;
+    loopGuardObj.WithInteger("ttlSeconds", loopGuard.ttlSeconds);
+    loopGuardObj.WithInteger("maxEntries", loopGuard.maxEntries);
+    object.WithObject(JSON_KEY_LOOP_GUARD, loopGuardObj);
+
+    // Metrics config
+    Crt::JsonObject metricsObj;
+    metricsObj.WithInteger("publishIntervalSec", metrics.publishIntervalSec);
+    metricsObj.WithString("awsTopic", metrics.awsTopic);
+    metricsObj.WithBool("enabled", metrics.enabled);
+    object.WithObject(JSON_KEY_METRICS, metricsObj);
+}
+#endif
+
 constexpr char Config::TAG[];
 constexpr char Config::DEFAULT_CONFIG_DIR[];
 constexpr char Config::DEFAULT_KEY_DIR[];
@@ -2590,6 +2881,9 @@ bool Config::ParseCliArgs(int argc, char **argv, CliArgs &cliArgs)
         {PlainConfig::SecureElement::CLI_SECURE_ELEMENT_KEY_LABEL, true, nullptr},
         {PlainConfig::SecureElement::CLI_SECURE_ELEMENT_SLOT_ID, true, nullptr},
         {PlainConfig::SecureElement::CLI_SECURE_ELEMENT_TOKEN_LABEL, true, nullptr},
+#if defined(LOCAL_MQTT_BRIDGE)
+        {PlainConfig::LocalMqttBridge::CLI_ENABLE_LOCAL_MQTT_BRIDGE, true, nullptr},
+#endif
         {PlainConfig::HttpProxyConfig::CLI_HTTP_PROXY_CONFIG_PATH, true, nullptr}};
 
     map<string, ArgumentDefinition> argumentDefinitionMap;

@@ -60,6 +60,12 @@
 
 #endif
 
+#if defined(LOCAL_MQTT_BRIDGE)
+
+#    include "local-mqtt-bridge/LocalMqttBridgeFeature.h"
+
+#endif
+
 #include <csignal>
 #include <memory>
 #include <thread>
@@ -618,6 +624,33 @@ int main(int argc, char *argv[])
             DC_FATAL_ERROR);
         deviceClientAbort(
             "Invalid configuration. Sensor Publish configuration is enabled but feature is not compiled into binary.",
+            EXIT_FAILURE);
+    }
+#endif
+
+#if defined(LOCAL_MQTT_BRIDGE)
+    if (config.config.localMqttBridge.enabled)
+    {
+        shared_ptr<LocalMqttBridgeFeature> localMqttBridge;
+        LOG_INFO(TAG, "Local MQTT Bridge is enabled");
+        localMqttBridge = make_shared<LocalMqttBridgeFeature>();
+        localMqttBridge->init(resourceManager, listener, config.config);
+        features->add(localMqttBridge->getName(), localMqttBridge);
+    }
+    else
+    {
+        LOG_INFO(TAG, "Local MQTT Bridge is disabled");
+        features->add(LocalMqttBridgeFeature::NAME, nullptr);
+    }
+#else
+    if (config.config.localMqttBridge.enabled)
+    {
+        LOGM_ERROR(
+            TAG,
+            "*** %s: Local MQTT Bridge configuration is enabled but feature is not compiled into binary.",
+            DC_FATAL_ERROR);
+        deviceClientAbort(
+            "Invalid configuration. Local MQTT Bridge configuration is enabled but feature is not compiled into binary.",
             EXIT_FAILURE);
     }
 #endif

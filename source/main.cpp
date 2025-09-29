@@ -98,6 +98,9 @@ using namespace Aws::Iot::DeviceClient::Shadow;
 #if !defined(EXCLUDE_SENSOR_PUBLISH)
 using namespace Aws::Iot::DeviceClient::SensorPublish;
 #endif
+#if defined(LOCAL_MQTT_BRIDGE)
+using namespace Aws::Iot::DeviceClient::LocalMqttBridge;
+#endif
 
 constexpr char TAG[] = "Main.cpp";
 

@@ -328,7 +328,7 @@ namespace Aws
                             };
                             uint16_t packetId = connection->Subscribe(expandedAws.c_str(),
                                                                      static_cast<Aws::Crt::Mqtt::QOS>(route.qos),
-                                                                     handler, onSubAck);
+                                                                     std::move(handler), std::move(onSubAck));
                             if (packetId == 0)
                             {
                                 LOGM_ERROR(TAG, "Failed to initiate subscription to AWS IoT topic: %s", expandedAws.c_str());

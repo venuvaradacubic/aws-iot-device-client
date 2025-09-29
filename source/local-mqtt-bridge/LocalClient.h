@@ -9,6 +9,7 @@
 #include <atomic>
 #include <thread>
 #include <chrono>
+#include <mutex>
 
 extern "C" {
 #include <mosquitto.h>

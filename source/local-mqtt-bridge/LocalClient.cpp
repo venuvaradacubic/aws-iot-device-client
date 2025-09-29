@@ -46,7 +46,7 @@ namespace Aws
                     mosq = mosquitto_new(this->clientId.c_str(), true, this);
                     if (!mosq)
                     {
-                        LOGM_ERROR(TAG, "Failed to create mosquitto instance");
+                        LOGM_ERROR(TAG, "%s", "Failed to create mosquitto instance");
                         throw std::runtime_error("Failed to create mosquitto instance");
                     }
 
@@ -83,7 +83,7 @@ namespace Aws
                 {
                     if (!mosq)
                     {
-                        LOGM_ERROR(TAG, "Mosquitto instance not initialized");
+                        LOGM_ERROR(TAG, "%s", "Mosquitto instance not initialized");
                         return false;
                     }
 
@@ -124,7 +124,7 @@ namespace Aws
                     if (mosq && connected.load())
                     {
                         mosquitto_disconnect(mosq);
-                        LOGM_INFO(TAG, "Disconnected from broker");
+                        LOGM_INFO(TAG, "%s", "Disconnected from broker");
                     }
                 }
 
@@ -137,7 +137,7 @@ namespace Aws
                 {
                     if (!mosq || !connected.load())
                     {
-                        LOGM_WARN(TAG, "Cannot subscribe - not connected");
+                        LOGM_WARN(TAG, "%s", "Cannot subscribe - not connected");
                         return false;
                     }
 
@@ -157,7 +157,7 @@ namespace Aws
                 {
                     if (!mosq || !connected.load())
                     {
-                        LOGM_WARN(TAG, "Cannot unsubscribe - not connected");
+                        LOGM_WARN(TAG, "%s", "Cannot unsubscribe - not connected");
                         return false;
                     }
 
@@ -178,7 +178,7 @@ namespace Aws
                 {
                     if (!mosq || !connected.load())
                     {
-                        LOGM_WARN(TAG, "Cannot publish - not connected");
+                        LOGM_WARN(TAG, "%s", "Cannot publish - not connected");
                         return false;
                     }
 
@@ -221,13 +221,13 @@ namespace Aws
                 {
                     if (running.load())
                     {
-                        LOGM_WARN(TAG, "LocalClient already running");
+                        LOGM_WARN(TAG, "%s", "LocalClient already running");
                         return;
                     }
 
                     running = true;
-                    networkThread = std::make_unique<std::thread>(&LocalClient::networkThreadFunction, this);
-                    LOGM_INFO(TAG, "LocalClient network thread started");
+                    networkThread.reset(new std::thread(&LocalClient::networkThreadFunction, this));
+                    LOGM_INFO(TAG, "%s", "LocalClient network thread started");
                 }
 
                 void LocalClient::stop()
@@ -246,7 +246,7 @@ namespace Aws
                         networkThread.reset();
                     }
 
-                    LOGM_INFO(TAG, "LocalClient stopped");
+                    LOGM_INFO(TAG, "%s", "LocalClient stopped");
                 }
 
                 std::string LocalClient::getClientId() const
@@ -325,7 +325,7 @@ namespace Aws
                     int result = mosquitto_reconnect(mosq);
                     if (result == MOSQ_ERR_SUCCESS)
                     {
-                        LOGM_INFO(TAG, "Reconnection initiated successfully");
+                        LOGM_INFO(TAG, "%s", "Reconnection initiated successfully");
                         return true;
                     }
                     else
@@ -354,7 +354,7 @@ namespace Aws
                         }
                         
                         libraryInitialized = true;
-                        LOGM_INFO(TAG, "Mosquitto library initialized");
+                        LOGM_INFO(TAG, "%s", "Mosquitto library initialized");
                     }
                 }
 
@@ -364,7 +364,7 @@ namespace Aws
                     {
                         mosquitto_lib_cleanup();
                         libraryInitialized = false;
-                        LOGM_INFO(TAG, "Mosquitto library cleaned up");
+                        LOGM_INFO(TAG, "%s", "Mosquitto library cleaned up");
                     }
                 }
 

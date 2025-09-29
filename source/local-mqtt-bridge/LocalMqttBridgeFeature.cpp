@@ -1,8 +1,33 @@
-// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright Amazon.com, Inc.                 {
+                    routeMatcher.reset(new RouteMatcher());
+                    // PayloadTagger is a static utility class, no need to instantiateits affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "LocalMqttBridgeFeature.h"
-#include "../logging/LoggerFactory.h"
+#i                                        if (connection)
+                            {
+                                auto messageHandler = 
+                                    [this](const Aws::Crt::Mqtt::MqttConnection&,
+                                           const Aws::Crt::String& receivedOnTopic,
+                                           const Aws::Crt::ByteBuf& payload) -> void {
+                                        this->handleAwsMessage(receivedOnTopic.c_str(), 
+                                                              reinterpret_cast<const char*>(payload.buffer), 
+                                                              payload.len);
+                                    };              auto messageHandler = 
+                                    [this](const Aws::Crt::Mqtt::MqttConnection&,
+                                           const Aws::Crt::String& receivedOnTopic,
+                                           const Aws::Crt::ByteBuf& payload) -> void {
+                                        this->handleAwsMessage(receivedOnTopic.c_str(), 
+                                                              reinterpret_cast<const char*>(payload.buffer), 
+                                                              payload.len);
+                                    };              auto messageHandler = 
+                                    [this](const Aws::Crt::Mqtt::MqttConnection&,
+                                           const Aws::Crt::String& receivedOnTopic,
+                                           const Aws::Crt::ByteBuf& payload) -> void {
+                                        this->handleAwsMessage(receivedOnTopic.c_str(), 
+                                                              reinterpret_cast<const char*>(payload.buffer), 
+                                                              payload.len);
+                                    };logging/LoggerFactory.h"
 #include "ConfigModel.h"
 #include <aws/crt/mqtt/MqttConnection.h>
 #include <iostream>
@@ -70,17 +95,17 @@ namespace Aws
                     
                     if (!validateConfig())
                     {
-                        LOGM_ERROR(TAG, "Invalid Local MQTT Bridge configuration");
+                        LOGM_ERROR(TAG, "%s", "Invalid Local MQTT Bridge configuration");
                         return -1;
                     }
 
                     if (!initializeComponents())
                     {
-                        LOGM_ERROR(TAG, "Failed to initialize Local MQTT Bridge components");
+                        LOGM_ERROR(TAG, "%s", "Failed to initialize Local MQTT Bridge components");
                         return -1;
                     }
 
-                    LOGM_INFO(TAG, "Local MQTT Bridge initialized successfully");
+                    LOGM_INFO(TAG, "%s", "Local MQTT Bridge initialized successfully");
                     return Feature::SUCCESS;
                 }
 
@@ -88,13 +113,13 @@ namespace Aws
                 {
                     if (running)
                     {
-                        LOGM_WARN(TAG, "Local MQTT Bridge is already running");
+                        LOGM_WARN(TAG, "%s", "Local MQTT Bridge is already running");
                         return Feature::SUCCESS;
                     }
 
                     if (!bridgeConfig.enabled)
                     {
-                        LOGM_INFO(TAG, "Local MQTT Bridge is disabled in configuration");
+                        LOGM_INFO(TAG, "%s", "Local MQTT Bridge is disabled in configuration");
                         return Feature::SUCCESS;
                     }
 
@@ -102,7 +127,7 @@ namespace Aws
                     
                     if (!setupConnections())
                     {
-                        LOGM_ERROR(TAG, "Failed to setup connections");
+                        LOGM_ERROR(TAG, "%s", "Failed to setup connections");
                         return -1;
                     }
 
@@ -110,12 +135,12 @@ namespace Aws
                     running = true;
                     startTime = std::chrono::steady_clock::now();
 
-                    localToAwsThread = std::make_unique<std::thread>(
-                        &LocalMqttBridgeFeature::localToAwsThreadFunction, this);
-                    awsToLocalThread = std::make_unique<std::thread>(
-                        &LocalMqttBridgeFeature::awsToLocalThreadFunction, this);
+                    localToAwsThread.reset(new std::thread(
+                        &LocalMqttBridgeFeature::localToAwsThreadFunction, this));
+                    awsToLocalThread.reset(new std::thread(
+                        &LocalMqttBridgeFeature::awsToLocalThreadFunction, this));
 
-                    LOGM_INFO(TAG, "Local MQTT Bridge started successfully");
+                    LOGM_INFO(TAG, "%s", "Local MQTT Bridge started successfully");
                     return Feature::SUCCESS;
                 }
 
@@ -126,7 +151,7 @@ namespace Aws
                         return Feature::SUCCESS;
                     }
 
-                    LOGM_INFO(TAG, "Stopping Local MQTT Bridge");
+                    LOGM_INFO(TAG, "%s", "Stopping Local MQTT Bridge");
                     running = false;
                     
                     // Stop local client
@@ -177,13 +202,13 @@ namespace Aws
                     // Validate local broker configuration
                     if (bridgeConfig.local.host.empty())
                     {
-                        LOGM_ERROR(TAG, "Local broker host cannot be empty");
+                        LOGM_ERROR(TAG, "%s", "Local broker host cannot be empty");
                         return false;
                     }
 
                     if (bridgeConfig.local.port <= 0 || bridgeConfig.local.port > 65535)
                     {
-                        LOGM_ERROR(TAG, "Local broker port must be between 1 and 65535");
+                        LOGM_ERROR(TAG, "%s", "Local broker port must be between 1 and 65535");
                         return false;
                     }
 
@@ -204,13 +229,13 @@ namespace Aws
 
                         if (route.direction == "up" && (route.localTopic.empty() || route.awsTopic.empty()))
                         {
-                            LOGM_ERROR(TAG, "Up route missing required topics");
+                            LOGM_ERROR(TAG, "%s", "Up route missing required topics");
                             return false;
                         }
 
                         if (route.direction == "down" && (route.awsTopic.empty() || route.localTopicTemplate.empty()))
                         {
-                            LOGM_ERROR(TAG, "Down route missing required topic template");
+                            LOGM_ERROR(TAG, "%s", "Down route missing required topic template");
                             return false;
                         }
                     }
@@ -223,25 +248,25 @@ namespace Aws
                     try
                     {
                         // Initialize loop guard
-                        loopGuard = std::make_unique<LoopGuard>(
+                        loopGuard.reset(new LoopGuard(
                             bridgeConfig.loopGuard.ttlSeconds, 
                             bridgeConfig.loopGuard.maxEntries
-                        );
+                        ));
 
                         // Initialize queues
-                        localToAwsQueue = std::make_unique<Queue>(
+                        localToAwsQueue.reset(new Queue(
                             bridgeConfig.queue.maxInMemory, 
                             5 // heartbeat deduplication window in seconds
-                        );
-                        awsToLocalQueue = std::make_unique<Queue>(
+                        ));
+                        awsToLocalQueue.reset(new Queue(
                             bridgeConfig.queue.maxInMemory, 
                             5 // heartbeat deduplication window in seconds
-                        );
+                        ));
 
                         // Initialize local MQTT client
-                        localClient = std::make_unique<LocalClient>(
+                        localClient.reset(new LocalClient(
                             "aws-iot-device-client-bridge"
-                        );
+                        ));
 
                         // Set up local client callbacks
                         localClient->setMessageCallback(
@@ -249,7 +274,7 @@ namespace Aws
                                     std::placeholders::_1, std::placeholders::_2, std::placeholders::_3)
                         );
 
-                        LOGM_INFO(TAG, "All bridge components initialized successfully");
+                        LOGM_INFO(TAG, "%s", "All bridge components initialized successfully");
                         return true;
                     }
                     catch (const std::exception& e)
@@ -275,7 +300,7 @@ namespace Aws
 
                     if (!connected)
                     {
-                        LOGM_ERROR(TAG, "Failed to connect to local MQTT broker");
+                        LOGM_ERROR(TAG, "%s", "Failed to connect to local MQTT broker");
                         return false;
                     }
 
@@ -323,11 +348,11 @@ namespace Aws
                                                               payload.len);
                                     };
                                 
-                                auto onSubAck = [this, expandedTopic](Aws::Crt::Mqtt::MqttConnection&, 
+                                auto onSubAck = [this, expandedTopic](const Aws::Crt::Mqtt::MqttConnection&, 
                                                                      uint16_t packetId, 
                                                                      const Aws::Crt::String&,
                                                                      Aws::Crt::Mqtt::QOS qos, 
-                                                                     int errorCode) {
+                                                                     int errorCode) -> void {
                                     if (errorCode == 0)
                                     {
                                         LOGM_INFO(TAG, "Successfully subscribed to AWS IoT topic: %s", expandedTopic.c_str());
@@ -370,7 +395,7 @@ namespace Aws
 
                 void LocalMqttBridgeFeature::localToAwsThreadFunction()
                 {
-                    LOGM_INFO(TAG, "Local-to-AWS message forwarding thread started");
+                    LOGM_INFO(TAG, "%s", "Local-to-AWS message forwarding thread started");
 
                     while (running.load())
                     {
@@ -454,12 +479,12 @@ namespace Aws
                         }
                     }
 
-                    LOGM_INFO(TAG, "Local-to-AWS message forwarding thread stopped");
+                    LOGM_INFO(TAG, "%s", "Local-to-AWS message forwarding thread stopped");
                 }
 
                 void LocalMqttBridgeFeature::awsToLocalThreadFunction()
                 {
-                    LOGM_INFO(TAG, "AWS-to-local message forwarding thread started");
+                    LOGM_INFO(TAG, "%s", "AWS-to-local message forwarding thread started");
 
                     while (running.load())
                     {
@@ -509,7 +534,7 @@ namespace Aws
                                 }
                                 else
                                 {
-                                    LOGM_WARN(TAG, "Local client not connected, dropping message");
+                                    LOGM_WARN(TAG, "%s", "Local client not connected, dropping message");
                                     messagesDropped++;
                                 }
                             }
@@ -521,7 +546,7 @@ namespace Aws
                         }
                     }
 
-                    LOGM_INFO(TAG, "AWS-to-local message forwarding thread stopped");
+                    LOGM_INFO(TAG, "%s", "AWS-to-local message forwarding thread stopped");
                 }
 
                 void LocalMqttBridgeFeature::handleLocalMessage(const std::string& topic, 

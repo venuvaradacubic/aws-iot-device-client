@@ -79,10 +79,10 @@ namespace Aws
                                 variables[varName] = matches[i].str();
                             }
                             
-                            return std::make_unique<MatchResult>(&compiledRoute.route, variables);
+                            return std::unique_ptr<MatchResult>(new MatchResult(&compiledRoute.route, variables));
                         }
                     }
-                    return std::make_unique<MatchResult>(nullptr);
+                    return std::unique_ptr<MatchResult>(new MatchResult(nullptr));
                 }
 
                 std::string RouteMatcher::generateLocalTopic(const Route* route, 

@@ -93,7 +93,7 @@ namespace Aws
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     entries.clear();
-                    LOGM_INFO(TAG, "LoopGuard entries cleared");
+                    LOGM_INFO(TAG, "%s", "LoopGuard entries cleared");
                 }
 
                 std::string LoopGuard::generateKey(const std::string& direction, const std::string& topic,

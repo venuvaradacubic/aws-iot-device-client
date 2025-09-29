@@ -2728,16 +2728,16 @@ void PlainConfig::LocalMqttBridge::SerializeToObject(Crt::JsonObject &object) co
     
     // Local broker config
     Crt::JsonObject localObj;
-    localObj.WithString("host", local.host);
+    localObj.WithString("host", local.host.c_str());
     localObj.WithInteger("port", local.port);
     localObj.WithBool("useTLS", local.useTLS);
     if (!local.username.empty())
     {
-        localObj.WithString("username", local.username);
+        localObj.WithString("username", local.username.c_str());
     }
     if (!local.password.empty())
     {
-        localObj.WithString("password", local.password);
+        localObj.WithString("password", local.password.c_str());
     }
     object.WithObject(JSON_KEY_LOCAL, localObj);
 
@@ -2746,18 +2746,18 @@ void PlainConfig::LocalMqttBridge::SerializeToObject(Crt::JsonObject &object) co
     for (const auto &route : routes)
     {
         Crt::JsonObject routeObj;
-        routeObj.WithString("direction", route.direction);
+        routeObj.WithString("direction", route.direction.c_str());
         if (!route.localTopic.empty())
         {
-            routeObj.WithString("localTopic", route.localTopic);
+            routeObj.WithString("localTopic", route.localTopic.c_str());
         }
         if (!route.awsTopic.empty())
         {
-            routeObj.WithString("awsTopic", route.awsTopic);
+            routeObj.WithString("awsTopic", route.awsTopic.c_str());
         }
         if (!route.localTopicTemplate.empty())
         {
-            routeObj.WithString("localTopicTemplate", route.localTopicTemplate);
+            routeObj.WithString("localTopicTemplate", route.localTopicTemplate.c_str());
         }
         routeObj.WithInteger("qos", route.qos);
         routeObj.WithInteger("throttleSeconds", route.throttleSeconds);
@@ -2780,7 +2780,7 @@ void PlainConfig::LocalMqttBridge::SerializeToObject(Crt::JsonObject &object) co
     // Metrics config
     Crt::JsonObject metricsObj;
     metricsObj.WithInteger("publishIntervalSec", metrics.publishIntervalSec);
-    metricsObj.WithString("awsTopic", metrics.awsTopic);
+    metricsObj.WithString("awsTopic", metrics.awsTopic.c_str());
     metricsObj.WithBool("enabled", metrics.enabled);
     object.WithObject(JSON_KEY_METRICS, metricsObj);
 }

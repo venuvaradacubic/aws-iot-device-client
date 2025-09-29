@@ -246,6 +246,20 @@ if (NOT EXCLUDE_SHADOW)
     set(DEP_DC_LIBS ${DEP_DC_LIBS} IotShadow-cpp)
 endif ()
 
+if (LOCAL_MQTT_BRIDGE)
+    # Find libmosquitto
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
+    
+    if(NOT MOSQUITTO_FOUND)
+        message(FATAL_ERROR "libmosquitto is required for LOCAL_MQTT_BRIDGE feature. Install libmosquitto-dev or disable with -DLOCAL_MQTT_BRIDGE=OFF")
+    endif()
+    
+    # Add mosquitto libraries and include directories
+    set(DEP_DC_LIBS ${DEP_DC_LIBS} ${MOSQUITTO_LIBRARIES})
+    target_include_directories(${DC_PROJECT_NAME} PRIVATE ${MOSQUITTO_INCLUDE_DIRS})
+endif ()
+
 target_link_libraries(${DC_PROJECT_NAME} ${DEP_DC_LIBS})
 target_link_libraries(${DC_PROJECT_NAME} OpenSSL::SSL)
 target_link_libraries(${DC_PROJECT_NAME} OpenSSL::Crypto)

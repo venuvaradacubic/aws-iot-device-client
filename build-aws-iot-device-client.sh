@@ -256,7 +256,7 @@ Version: ${PKG_VERSION}
 Section: net
 Priority: optional
 Architecture: ${ARCH}
-Maintainer: Dave Thomson <dave.thomson2@cubic.com>
+Maintainer: Venu madhavan Varada <venumadhavan.varada@cubic.com>
 Description: AWS IoT Device Client packaged for Field Gate
  Device-side app that connects to AWS IoT Core for Jobs, Tunneling, Defender, etc.
 Depends: libssl3 | libssl1.1, zlib1g, jq, systemd

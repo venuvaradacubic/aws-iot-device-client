@@ -17,6 +17,7 @@ option(EXCLUDE_SAMPLE_SHADOW "Builds the device client without the IoT Sample Sh
 option(EXCLUDE_SECURE_ELEMENT "Builds the device client without the support for storing/accessing keys stored in a secure module using PKCS#11." ON)
 option(EXCLUDE_SENSOR_PUBLISH "Builds the device client without the Sensor Publish over MQTT Feature." OFF)
 option(EXCLUDE_SENSOR_PUBLISH_SAMPLES "Builds the device client without the Sensor Publish sample servers." OFF)
+option(LOCAL_MQTT_BRIDGE "Builds the device client with Local MQTT Bridge Feature." OFF)
 option(GIT_VERSION "Updates the version number using the Git commit history" ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-ignored-attributes")
 
@@ -70,6 +71,10 @@ endif()
 
 if (EXCLUDE_SENSOR_PUBLISH_SAMPLES)
     add_definitions(-DEXCLUDE_SENSOR_PUBLISH_SAMPLES)
+endif()
+
+if (LOCAL_MQTT_BRIDGE)
+    add_definitions(-DLOCAL_MQTT_BRIDGE)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "./sdk-cpp-workspace/lib/cmake")
@@ -126,6 +131,11 @@ endif ()
 if (NOT EXCLUDE_SENSOR_PUBLISH)
     file(GLOB SENSOR_PUBLISH_SRC "source/sensor-publish/*.cpp")
     list(APPEND DC_SRC ${SENSOR_PUBLISH_SRC})
+endif()
+
+if (LOCAL_MQTT_BRIDGE)
+    file(GLOB LOCAL_MQTT_BRIDGE_SRC "source/local-mqtt-bridge/*.cpp")
+    list(APPEND DC_SRC ${LOCAL_MQTT_BRIDGE_SRC})
 endif()
 
 if (NOT EXCLUDE_SENSOR_PUBLISH_SAMPLES)

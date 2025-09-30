@@ -33,7 +33,6 @@ namespace Aws
 
                 LocalMqttBridgeFeature::LocalMqttBridgeFeature()
                 {
-                    // Avoid std::make_unique to keep compatibility with C++11 (project may compile with -std=c++11)
                     routeMatcher = std::unique_ptr<RouteMatcher>(new RouteMatcher());
                 }
 
@@ -83,6 +82,15 @@ namespace Aws
                         LOGM_ERROR(TAG, "%s", "Failed to initialize Local MQTT Bridge components");
                         return -1;
                     }
+                    // Initialize enhanced metrics if enabled in config
+                    if (bridgeConfig.metrics.enabled)
+                    {
+                        BridgeMetricsConfig mc;
+                        mc.enabled = bridgeConfig.metrics.enabled;
+                        mc.publishIntervalSec = bridgeConfig.metrics.publishIntervalSec == 0 ? 60 : bridgeConfig.metrics.publishIntervalSec;
+                        mc.awsTopic = bridgeConfig.metrics.awsTopic;
+                        metrics.reset(new Metrics(mc, thingName));
+                    }
 
                     LOGM_INFO(TAG, "%s", "Local MQTT Bridge initialized successfully");
                     return Feature::SUCCESS;
@@ -116,6 +124,10 @@ namespace Aws
 
                     localToAwsThread.reset(new std::thread(&LocalMqttBridgeFeature::localToAwsThreadFunction, this));
                     awsToLocalThread.reset(new std::thread(&LocalMqttBridgeFeature::awsToLocalThreadFunction, this));
+                    if (metrics && metrics->getConfig().enabled && !metrics->getConfig().awsTopic.empty())
+                    {
+                        metricsThread.reset(new std::thread(&LocalMqttBridgeFeature::metricsThreadFunction, this));
+                    }
 
                     LOGM_INFO(TAG, "%s", "Local MQTT Bridge started successfully");
                     return Feature::SUCCESS;
@@ -158,6 +170,11 @@ namespace Aws
                              "Messages forwarded: %zu, Messages dropped: %zu", 
                              uptime.count(), messagesForwarded.load(), messagesDropped.load());
                     
+                    if (metricsThread && metricsThread->joinable())
+                    {
+                        metricsThread->join();
+                        metricsThread.reset();
+                    }
                     return Feature::SUCCESS;
                 }
 
@@ -345,6 +362,7 @@ namespace Aws
                     awsToLocalQueue.reset();
                     localToAwsQueue.reset();
                     loopGuard.reset();
+                    metrics.reset();
                 }
 
                 void LocalMqttBridgeFeature::localToAwsThreadFunction()
@@ -360,8 +378,19 @@ namespace Aws
                             if (loopGuard->shouldDrop("up", message.topic, message.payload))
                             {
                                 messagesDropped++;
+                                if (metrics) metrics->droppedLoop.fetch_add(1, std::memory_order_relaxed);
                                 continue;
                             }
+
+                            // If AWS not connected, buffer offline and continue
+                            if (!isAwsConnected())
+                            {
+                                enqueueOffline(message);
+                                continue;
+                            }
+
+                            // Drain any offline backlog first
+                            drainOffline();
 
                             // Find matching route (with variable capture for '+')
                             auto matchResult = routeMatcher->matchUpWithVariables(message.topic);
@@ -412,6 +441,7 @@ namespace Aws
 
                                 if (throttled)
                                 {
+                                    if (metrics) metrics->throttledMessages.fetch_add(1, std::memory_order_relaxed);
                                     continue; // skip publish this cycle
                                 }
                                 // Tag payload to prevent loops
@@ -472,6 +502,7 @@ namespace Aws
                                     if (packetId != 0)
                                     {
                                         messagesForwarded++;
+                                        if (metrics) metrics->forwardedUp.fetch_add(1, std::memory_order_relaxed);
                                         LOGM_DEBUG(TAG, "Forwarded message from local to AWS: %s -> %s", 
                                                   message.topic.c_str(), awsTopic.c_str());
                                     }
@@ -480,6 +511,7 @@ namespace Aws
                                         LOGM_ERROR(TAG, "Failed to initiate publish to AWS IoT topic: %s", 
                                                   awsTopic.c_str());
                                         messagesDropped++;
+                                        if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
                                     }
                                 }
                                 else
@@ -487,12 +519,14 @@ namespace Aws
                                     LOGM_ERROR(TAG, "No AWS IoT connection available for publishing to: %s", 
                                               awsTopic.c_str());
                                     messagesDropped++;
+                                    if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
                                 }
                             }
                             else
                             {
                                 LOGM_DEBUG(TAG, "No route found for local topic: %s", message.topic.c_str());
                                 messagesDropped++;
+                                if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
                             }
                         }
                     }
@@ -513,6 +547,7 @@ namespace Aws
                             if (loopGuard->shouldDrop("down", message.topic, message.payload))
                             {
                                 messagesDropped++;
+                                if (metrics) metrics->droppedLoop.fetch_add(1, std::memory_order_relaxed);
                                 continue;
                             }
 
@@ -540,6 +575,7 @@ namespace Aws
                                     if (published)
                                     {
                                         messagesForwarded++;
+                                        if (metrics) metrics->forwardedDown.fetch_add(1, std::memory_order_relaxed);
                                         LOGM_DEBUG(TAG, "Forwarded message from AWS to local: %s -> %s", 
                                                   message.topic.c_str(), localTopic.c_str());
                                     }
@@ -548,18 +584,21 @@ namespace Aws
                                         LOGM_WARN(TAG, "Failed to publish to local broker: %s", 
                                                  localTopic.c_str());
                                         messagesDropped++;
+                                        if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
                                     }
                                 }
                                 else
                                 {
                                     LOGM_WARN(TAG, "%s", "Local client not connected, dropping message");
                                     messagesDropped++;
+                                    if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
                                 }
                             }
                             else
                             {
                                 LOGM_DEBUG(TAG, "No route found for AWS topic: %s", message.topic.c_str());
                                 messagesDropped++;
+                                if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
                             }
                         }
                     }
@@ -632,6 +671,81 @@ namespace Aws
                     }
                     
                     return result;
+                }
+
+                bool LocalMqttBridgeFeature::isAwsConnected() const
+                {
+                    auto connection = resourceManager ? resourceManager->getConnection() : nullptr;
+                    return connection && connection->GetIsConnected();
+                }
+
+                void LocalMqttBridgeFeature::drainOffline()
+                {
+                    if (!isAwsConnected()) return;
+                    std::deque<QueuedMessage> temp;
+                    {
+                        std::lock_guard<std::mutex> lk(offlineMutex);
+                        if (offlineBuffer.empty()) return;
+                        temp.swap(offlineBuffer);
+                    }
+                    for (auto &msg : temp)
+                    {
+                        // Re-insert into normal flow (simplified: push back onto main queue)
+                        if (!localToAwsQueue->push(msg.topic, msg.payload, true))
+                        {
+                            // If push fails, drop silently but count as publish error candidate
+                            if (metrics) metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                }
+
+                void LocalMqttBridgeFeature::enqueueOffline(const QueuedMessage &msg)
+                {
+                    std::lock_guard<std::mutex> lk(offlineMutex);
+                    if (bridgeConfig.queue.maxInMemory > 0 && offlineBuffer.size() >= bridgeConfig.queue.maxInMemory)
+                    {
+                        // ring-drop oldest
+                        offlineBuffer.pop_front();
+                        if (metrics) metrics->droppedOverflow.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    offlineBuffer.push_back(msg);
+                    if (metrics) metrics->queuedOffline.fetch_add(1, std::memory_order_relaxed);
+                }
+
+                void LocalMqttBridgeFeature::metricsThreadFunction()
+                {
+                    auto cfg = metrics->getConfig();
+                    uint32_t interval = cfg.publishIntervalSec < 5 ? 5 : cfg.publishIntervalSec;
+                    LOGM_INFO(TAG, "Metrics thread started: interval=%u topic=%s", interval, cfg.awsTopic.c_str());
+                    while (running.load())
+                    {
+                        for (uint32_t i = 0; i < interval && running.load(); ++i)
+                        {
+                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                        }
+                        if (!running.load()) break;
+                        if (!isAwsConnected()) continue; // skip if disconnected
+                        uint32_t offlineDepth = 0;
+                        {
+                            std::lock_guard<std::mutex> lk(offlineMutex);
+                            offlineDepth = static_cast<uint32_t>(offlineBuffer.size());
+                        }
+                        Aws::Crt::String json = metrics->toJson(offlineDepth, 0, 0);
+                        auto connection = resourceManager->getConnection();
+                        if (!connection) continue;
+                        bool ok = connection->Publish(cfg.awsTopic.c_str(), Aws::Crt::Mqtt::QOS::AWS_MQTT_QOS_AT_LEAST_ONCE, false,
+                                                       reinterpret_cast<const uint8_t*>(json.c_str()), json.length());
+                        if (!ok)
+                        {
+                            metrics->publishErrors.fetch_add(1, std::memory_order_relaxed);
+                            LOGM_WARN(TAG, "Failed to publish metrics to %s", cfg.awsTopic.c_str());
+                        }
+                        else
+                        {
+                            LOGM_DEBUG(TAG, "Published metrics (%zu bytes) to %s", static_cast<size_t>(json.length()), cfg.awsTopic.c_str());
+                        }
+                    }
+                    LOGM_INFO(TAG, "%s", "Metrics thread exiting");
                 }
 
             } // namespace LocalMqttBridge

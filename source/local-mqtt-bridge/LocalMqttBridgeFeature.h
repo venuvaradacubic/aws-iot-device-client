@@ -13,6 +13,7 @@
 #include "LoopGuard.h"
 #include "Queue.h"
 #include "LocalClient.h"
+#include "Metrics.h"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -75,10 +76,18 @@ namespace Aws
                     std::unique_ptr<std::thread> localToAwsThread;
                     std::unique_ptr<std::thread> awsToLocalThread;
                     
-                    // Metrics tracking
+                    // Legacy simple counters (retained for backward logging) & start time
                     std::atomic<size_t> messagesForwarded{0};
                     std::atomic<size_t> messagesDropped{0};
                     std::chrono::steady_clock::time_point startTime;
+
+                    // Enhanced metrics subsystem
+                    std::unique_ptr<Metrics> metrics;
+                    std::unique_ptr<std::thread> metricsThread;
+
+                    // Offline buffer for AWS disconnect scenario
+                    std::deque<QueuedMessage> offlineBuffer;
+                    std::mutex offlineMutex;
 
                     /**
                      * @brief Load configuration from PlainConfig
@@ -118,6 +127,7 @@ namespace Aws
                      * @brief Thread function for forwarding messages from AWS to local
                      */
                     void awsToLocalThreadFunction();
+                    void metricsThreadFunction();
 
                     /**
                      * @brief Handle message received from local broker
@@ -139,6 +149,10 @@ namespace Aws
                      */
                     std::string expandTopic(const std::string& topicTemplate, 
                                            const std::string& thingName) const;
+
+                    bool isAwsConnected() const;
+                    void drainOffline();
+                    void enqueueOffline(const QueuedMessage &msg);
                 };
 
             } // namespace LocalMqttBridge

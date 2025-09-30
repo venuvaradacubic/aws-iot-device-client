@@ -322,7 +322,11 @@ namespace Aws
 
                     LOGM_INFO(TAG, "Attempting to reconnect to %s:%d", host.c_str(), port);
                     
-                    int result = mosquitto_reconnect(mosq);
+                    // Ensure clean disconnect first to avoid protocol violations
+                    mosquitto_disconnect(mosq);
+                    
+                    // Use fresh connect instead of reconnect to avoid multiple CONNECT issues
+                    int result = mosquitto_connect(mosq, host.c_str(), port, keepAlive);
                     if (result == MOSQ_ERR_SUCCESS)
                     {
                         LOGM_INFO(TAG, "%s", "Reconnection initiated successfully");

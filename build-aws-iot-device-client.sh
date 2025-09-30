@@ -1,9 +1,10 @@
-#!/bin/bash
+﻿#!/bin/bash
+
+if [ -z "$BASH_VERSION" ]; then
+    exec bash "$0" "$@"
+fi
 
 set -euo pipefail
-
-
-
 
 AIDC_VER=${AIDC_VER:-local-mqtt-bridge}
 ARCH=${ARCH:-arm64}
@@ -140,7 +141,7 @@ if [ -d "${SAMPLE_HANDLERS_SRC}" ]; then
   echo "Copying sample job handlers from ${SAMPLE_HANDLERS_SRC}..."
   mkdir -p "${PKG_SAMPLE_HANDLERS_DIR}"
   cp -r "${SAMPLE_HANDLERS_SRC}"/* "${PKG_SAMPLE_HANDLERS_DIR}/"
- 
+
   find "${PKG_SAMPLE_HANDLERS_DIR}" -type f -name "*.sh" -exec chmod 0755 {} \;
   echo "Packaged sample job handlers"
 else
@@ -245,7 +246,7 @@ cat > "${PKG_OPT_FGATE_DIR}/aws-iot-config.env.example" <<'EOF'
 EOF
 
 PKG_NAME=${PKG_NAME:-aws-iot-device-client-fgate}
-PKG_VERSION=${PKG_VERSION:-v1.10.1}
+PKG_VERSION=${PKG_VERSION:-1.10.1}
 cat > "${PKG_DEBIAN_DIR}/control" <<EOF
 Package: ${PKG_NAME}
 Version: ${PKG_VERSION}
@@ -366,11 +367,11 @@ fi
 if [ ! -f ${SHADOW_DIR}/device-shadow-output.json ]; then
   install -m 0600 -o ${USER} -g ${GROUP} /dev/null ${SHADOW_DIR}/device-shadow-output.json || true
 fi
-if [ -f ${SHADOW_DIR}/device-shadow-input.json ]; then 
+if [ -f ${SHADOW_DIR}/device-shadow-input.json ]; then
   chown ${USER}:${GROUP} ${SHADOW_DIR}/device-shadow-input.json || true
   chmod 0600 ${SHADOW_DIR}/device-shadow-input.json || true
 fi
-if [ -f ${SHADOW_DIR}/device-shadow-output.json ]; then 
+if [ -f ${SHADOW_DIR}/device-shadow-output.json ]; then
   chown ${USER}:${GROUP} ${SHADOW_DIR}/device-shadow-output.json || true
   chmod 0600 ${SHADOW_DIR}/device-shadow-output.json || true
 fi
@@ -540,8 +541,6 @@ if [ -f "${AWS_CONFIG_FILE}" ]; then
       *=*) export "$line" ;;
     esac
   done < "${AWS_CONFIG_FILE}"
-fi
-
 fi
 
 echo "AWS_IOT_ENDPOINT=${AWS_IOT_ENDPOINT:-<not set>}"

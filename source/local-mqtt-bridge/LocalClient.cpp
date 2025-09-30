@@ -96,7 +96,7 @@ namespace Aws
                     // Set authentication if provided
                     if (!username.empty())
                     {
-                        int result = mosquitto_username_pw_set(mosq, username.c_str(), 
+                        int result = mosquitto_username_pw_set(mosq, username.c_str(),
                                                               password.empty() ? nullptr : password.c_str());
                         if (result != MOSQ_ERR_SUCCESS)
                         {
@@ -109,12 +109,12 @@ namespace Aws
                     int result = mosquitto_connect(mosq, host.c_str(), port, keepAlive);
                     if (result != MOSQ_ERR_SUCCESS)
                     {
-                        LOGM_ERROR(TAG, "Failed to connect to %s:%d - %s", 
+                        LOGM_ERROR(TAG, "Failed to connect to %s:%d - %s",
                                   host.c_str(), port, mosquitto_strerror(result));
                         return false;
                     }
 
-                    LOGM_INFO(TAG, "Connecting to %s:%d with client ID %s", 
+                    LOGM_INFO(TAG, "Connecting to %s:%d with client ID %s",
                              host.c_str(), port, clientId.c_str());
                     return true;
                 }
@@ -144,7 +144,7 @@ namespace Aws
                     int result = mosquitto_subscribe(mosq, nullptr, topic.c_str(), qos);
                     if (result != MOSQ_ERR_SUCCESS)
                     {
-                        LOGM_ERROR(TAG, "Failed to subscribe to %s: %s", 
+                        LOGM_ERROR(TAG, "Failed to subscribe to %s: %s",
                                   topic.c_str(), mosquitto_strerror(result));
                         return false;
                     }
@@ -164,7 +164,7 @@ namespace Aws
                     int result = mosquitto_unsubscribe(mosq, nullptr, topic.c_str());
                     if (result != MOSQ_ERR_SUCCESS)
                     {
-                        LOGM_ERROR(TAG, "Failed to unsubscribe from %s: %s", 
+                        LOGM_ERROR(TAG, "Failed to unsubscribe from %s: %s",
                                   topic.c_str(), mosquitto_strerror(result));
                         return false;
                     }
@@ -185,7 +185,7 @@ namespace Aws
                     int result = mosquitto_publish(mosq, nullptr, topic.c_str(), payloadLen, payload, qos, retain);
                     if (result != MOSQ_ERR_SUCCESS)
                     {
-                        LOGM_ERROR(TAG, "Failed to publish to %s: %s", 
+                        LOGM_ERROR(TAG, "Failed to publish to %s: %s",
                                   topic.c_str(), mosquitto_strerror(result));
                         return false;
                     }
@@ -196,7 +196,7 @@ namespace Aws
                         lastMessageTime = std::chrono::steady_clock::now();
                     }
 
-                    LOGM_DEBUG(TAG, "Published message to %s (payload=%d bytes, QoS=%d, retain=%s)", 
+                    LOGM_DEBUG(TAG, "Published message to %s (payload=%d bytes, QoS=%d, retain=%s)",
                               topic.c_str(), payloadLen, qos, retain ? "true" : "false");
                     return true;
                 }
@@ -257,7 +257,7 @@ namespace Aws
                 std::string LocalClient::getConnectionStats() const
                 {
                     std::lock_guard<std::mutex> lock(statsMutex);
-                    
+
                     std::stringstream ss;
                     ss << "LocalClient[" << clientId << "] ";
                     ss << "Connected: " << (connected.load() ? "true" : "false") << ", ";
@@ -265,14 +265,14 @@ namespace Aws
                     ss << "Messages RX: " << messagesReceived << ", ";
                     ss << "Messages TX: " << messagesSent << ", ";
                     ss << "Reconnects: " << reconnectAttempts;
-                    
+
                     if (connected.load())
                     {
                         auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
                             std::chrono::steady_clock::now() - connectTime);
                         ss << ", Uptime: " << uptime.count() << "s";
                     }
-                    
+
                     return ss.str();
                 }
 
@@ -280,67 +280,129 @@ namespace Aws
                 {
                     LOGM_INFO(TAG, "Network thread started for client %s", clientId.c_str());
 
+                    // Initialize timing so first attempt can start immediately
+                    nextAttemptTime = std::chrono::steady_clock::now();
+
                     while (running.load())
                     {
-                        if (connected.load())
+                        auto now = std::chrono::steady_clock::now();
+
+                        switch (state.load())
                         {
-                            // Process network events
-                            int result = mosquitto_loop(mosq, 100, 1);
-                            if (result != MOSQ_ERR_SUCCESS)
+                            case ConnState::Connected:
                             {
-                                LOGM_ERROR(TAG, "Network loop error: %s", mosquitto_strerror(result));
-                                connected = false;
-                                
-                                if (connectionCallback)
+                                int result = mosquitto_loop(mosq, 100, 1);
+                                if (result != MOSQ_ERR_SUCCESS)
                                 {
-                                    connectionCallback(false, result);
+                                    LOGM_WARN(TAG, "Network loop returned %s; marking disconnected", mosquitto_strerror(result));
+                                    setState(ConnState::Disconnected);
+                                    scheduleBackoff();
                                 }
+                                break;
                             }
-                        }
-                        else
-                        {
-                            // Try to reconnect
-                            if (!host.empty() && running.load())
+                            case ConnState::Connecting:
                             {
-                                attemptReconnect();
+                                int result = mosquitto_loop(mosq, 100, 1);
+                                if (result != MOSQ_ERR_SUCCESS)
+                                {
+                                    LOGM_WARN(TAG, "Loop while connecting returned %s; will backoff", mosquitto_strerror(result));
+                                    setState(ConnState::Disconnected);
+                                    scheduleBackoff();
+                                    break;
+                                }
+                                // Timeout if no CONNACK within CONNECT_TIMEOUT_SEC
+                                if (now - connectingStartTime > std::chrono::seconds(CONNECT_TIMEOUT_SEC))
+                                {
+                                    LOGM_WARN(TAG, "Connect timeout (%ds) reached without CONNACK; forcing retry", CONNECT_TIMEOUT_SEC);
+                                    setState(ConnState::Disconnected);
+                                    scheduleBackoff();
+                                }
+                                break;
                             }
-                            
-                            // Wait before next attempt
-                            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                            case ConnState::Disconnected:
+                            {
+                                if (now >= nextAttemptTime && !host.empty())
+                                {
+                                    attemptConnect();
+                                }
+                                else
+                                {
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                                }
+                                break;
+                            }
                         }
                     }
 
                     LOGM_INFO(TAG, "Network thread stopped for client %s", clientId.c_str());
                 }
 
-                bool LocalClient::attemptReconnect()
+                void LocalClient::setState(ConnState newState)
+                {
+                    state.store(newState);
+                    connected.store(newState == ConnState::Connected);
+                }
+
+                void LocalClient::scheduleBackoff(bool immediateOnFailure)
+                {
+                    if (immediateOnFailure)
+                    {
+                        currentBackoffSeconds = INITIAL_BACKOFF_SEC;
+                    }
+                    else if (currentBackoffSeconds == 0)
+                    {
+                        currentBackoffSeconds = INITIAL_BACKOFF_SEC;
+                    }
+                    else
+                    {
+                        // Exponential growth
+                        currentBackoffSeconds = std::min(currentBackoffSeconds * 2, MAX_BACKOFF_SEC);
+                    }
+
+                    // Add small jitter (0-250ms) to avoid lockstep with other clients
+                    static thread_local std::mt19937 rng{std::random_device{}()};
+                    std::uniform_int_distribution<int> jitterDist(0, 250);
+                    auto jitterMs = std::chrono::milliseconds(jitterDist(rng));
+
+                    nextAttemptTime = std::chrono::steady_clock::now() + std::chrono::seconds(currentBackoffSeconds) + jitterMs;
+                    LOGM_INFO(TAG, "Next reconnect attempt in %d s (+%lld ms jitter)", currentBackoffSeconds, (long long)jitterMs.count());
+                }
+
+                bool LocalClient::attemptConnect()
                 {
                     if (!mosq || !running.load())
                     {
                         return false;
                     }
+                    if (state.load() == ConnState::Connecting || state.load() == ConnState::Connected)
+                    {
+                        return true; // Already in progress or done
+                    }
 
-                    LOGM_INFO(TAG, "Attempting to reconnect to %s:%d", host.c_str(), port);
-                    
-                    // Ensure clean disconnect first to avoid protocol violations
-                    mosquitto_disconnect(mosq);
-                    
-                    // Use fresh connect instead of reconnect to avoid multiple CONNECT issues
+                    setState(ConnState::Connecting);
+                    connectingStartTime = std::chrono::steady_clock::now();
+
+                    LOGM_INFO(TAG, "Attempting connection to %s:%d (backoffAttempt=%d)", host.c_str(), port, backoffAttempt);
                     int result = mosquitto_connect(mosq, host.c_str(), port, keepAlive);
                     if (result == MOSQ_ERR_SUCCESS)
                     {
-                        LOGM_INFO(TAG, "%s", "Reconnection initiated successfully");
+                        {
+                            std::lock_guard<std::mutex> lock(statsMutex);
+                            reconnectAttempts++; // counts initiated attempts beyond the first
+                        }
+                        backoffAttempt++;
+                        // Do not mark connected yet; wait for onConnect callback
                         return true;
                     }
                     else
                     {
+                        LOGM_WARN(TAG, "Connect initiation failed: %s", mosquitto_strerror(result));
                         {
                             std::lock_guard<std::mutex> lock(statsMutex);
-                            reconnectAttempts++;
+                            reconnectFailures++;
                         }
-                        
-                        LOGM_WARN(TAG, "Reconnection failed: %s (attempt %d)", 
-                                 mosquitto_strerror(result), reconnectAttempts);
+                        setState(ConnState::Disconnected);
+                        scheduleBackoff();
                         return false;
                     }
                 }
@@ -352,11 +414,11 @@ namespace Aws
                         int result = mosquitto_lib_init();
                         if (result != MOSQ_ERR_SUCCESS)
                         {
-                            LOGM_ERROR(TAG, "Failed to initialize mosquitto library: %s", 
+                            LOGM_ERROR(TAG, "Failed to initialize mosquitto library: %s",
                                       mosquitto_strerror(result));
                             throw std::runtime_error("Failed to initialize mosquitto library");
                         }
-                        
+
                         libraryInitialized = true;
                         LOGM_INFO(TAG, "%s", "Mosquitto library initialized");
                     }
@@ -380,14 +442,17 @@ namespace Aws
 
                     if (result == 0)
                     {
-                        client->connected = true;
+                        client->setState(ConnState::Connected);
+                        client->currentBackoffSeconds = INITIAL_BACKOFF_SEC; // reset backoff window
+                        client->backoffAttempt = 0;
                         {
                             std::lock_guard<std::mutex> lock(client->statsMutex);
                             client->connectTime = std::chrono::steady_clock::now();
+                            client->connectSuccesses++;
                         }
-                        
+
                         LOGM_INFO(TAG, "Connected to broker: %s", client->clientId.c_str());
-                        
+
                         if (client->connectionCallback)
                         {
                             client->connectionCallback(true, result);
@@ -395,9 +460,9 @@ namespace Aws
                     }
                     else
                     {
-                        LOGM_ERROR(TAG, "Connection failed for %s: %s", 
+                        LOGM_ERROR(TAG, "Connection failed for %s: %s",
                                   client->clientId.c_str(), mosquitto_strerror(result));
-                        
+
                         if (client->connectionCallback)
                         {
                             client->connectionCallback(false, result);
@@ -410,18 +475,19 @@ namespace Aws
                     LocalClient* client = static_cast<LocalClient*>(userdata);
                     if (!client) return;
 
-                    client->connected = false;
-                    
-                    LOGM_INFO(TAG, "Disconnected from broker: %s (reason: %s)", 
+                    client->setState(ConnState::Disconnected);
+                    client->scheduleBackoff(true);
+
+                    LOGM_INFO(TAG, "Disconnected from broker: %s (reason: %s)",
                              client->clientId.c_str(), mosquitto_strerror(result));
-                    
+
                     if (client->connectionCallback)
                     {
                         client->connectionCallback(false, result);
                     }
                 }
 
-                void LocalClient::onMessage(struct mosquitto* mosq, void* userdata, 
+                void LocalClient::onMessage(struct mosquitto* mosq, void* userdata,
                                            const struct mosquitto_message* message)
                 {
                     LocalClient* client = static_cast<LocalClient*>(userdata);
@@ -433,12 +499,12 @@ namespace Aws
                         client->lastMessageTime = std::chrono::steady_clock::now();
                     }
 
-                    LOGM_DEBUG(TAG, "Message received on %s (payload=%d bytes)", 
+                    LOGM_DEBUG(TAG, "Message received on %s (payload=%d bytes)",
                               message->topic, message->payloadlen);
 
                     if (client->messageCallback)
                     {
-                        client->messageCallback(std::string(message->topic), 
+                        client->messageCallback(std::string(message->topic),
                                               message->payload, message->payloadlen);
                     }
                 }

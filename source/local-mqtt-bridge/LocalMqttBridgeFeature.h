@@ -27,7 +27,7 @@ namespace Aws
             {
                 /**
                  * @brief Main feature class for Local MQTT Bridge functionality
-                 * 
+                 *
                  * This feature bridges selected topics between a local MQTT broker
                  * and AWS IoT Core with loop prevention and throttling.
                  */
@@ -47,7 +47,7 @@ namespace Aws
 
                     /**
                      * @brief Initialize the feature with configuration
-                     * 
+                     *
                      * @param manager Shared resource manager for AWS IoT connection
                      * @param notifier Client base notifier
                      * @param config Overall device client configuration
@@ -62,19 +62,25 @@ namespace Aws
                     std::shared_ptr<ClientBaseNotifier> baseNotifier;
                     LocalMqttBridgeConfig bridgeConfig;
                     std::string thingName; // Cache the thing name
-                    
+
                     // Core components
                     std::unique_ptr<RouteMatcher> routeMatcher;
                     std::unique_ptr<LoopGuard> loopGuard;
                     std::unique_ptr<Queue> localToAwsQueue;
                     std::unique_ptr<Queue> awsToLocalQueue;
                     std::unique_ptr<LocalClient> localClient;
-                    
+                    // Track topics that need subscription (for up routes)
+                    std::vector<std::string> upRouteLocalTopics;
+                    // Guard for subscription list
+                    std::mutex subscriptionMutex;
+                    // Flag to know if initial subscription pass done after first connect
+                    std::atomic<bool> initialLocalSubsDone{false};
+
                     // Threading
                     std::atomic<bool> running{false};
                     std::unique_ptr<std::thread> localToAwsThread;
                     std::unique_ptr<std::thread> awsToLocalThread;
-                    
+
                     // Metrics tracking
                     std::atomic<size_t> messagesForwarded{0};
                     std::atomic<size_t> messagesDropped{0};
@@ -103,6 +109,8 @@ namespace Aws
                      * @return true if setup succeeded
                      */
                     bool setupConnections();
+                    // Subscribe to all up-route local topics (idempotent) if connected
+                    void subscribeUpRouteTopicsIfConnected(bool forceResubscribe = false);
 
                     /**
                      * @brief Cleanup all resources and stop threads
@@ -137,7 +145,7 @@ namespace Aws
                     /**
                      * @brief Expand topic template with thing name
                      */
-                    std::string expandTopic(const std::string& topicTemplate, 
+                    std::string expandTopic(const std::string& topicTemplate,
                                            const std::string& thingName) const;
                 };
 

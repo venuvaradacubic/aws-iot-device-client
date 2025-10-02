@@ -57,7 +57,7 @@ namespace Aws
                 {
                     resourceManager = manager;
                     baseNotifier = notifier;
-                    
+
                     // Extract thing name from config
                     if (config.thingName.has_value() && !config.thingName->empty())
                     {
@@ -69,9 +69,9 @@ namespace Aws
                         thingName = "unknown-device";
                         LOGM_WARN(TAG, "No thing name configured, using default: %s", thingName.c_str());
                     }
-                    
+
                     loadFromConfig(config);
-                    
+
                     if (!validateConfig())
                     {
                         LOGM_ERROR(TAG, "%s", "Invalid Local MQTT Bridge configuration");
@@ -103,7 +103,7 @@ namespace Aws
                     }
 
                     LOGM_INFO(TAG, "Starting Local MQTT Bridge with %zu routes", bridgeConfig.routes.size());
-                    
+
                     if (!setupConnections())
                     {
                         LOGM_ERROR(TAG, "%s", "Failed to setup connections");
@@ -130,7 +130,7 @@ namespace Aws
 
                     LOGM_INFO(TAG, "%s", "Stopping Local MQTT Bridge");
                     running = false;
-                    
+
                     // Stop local client
                     if (localClient)
                     {
@@ -153,19 +153,19 @@ namespace Aws
                     // Print final statistics
                     auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::steady_clock::now() - startTime);
-                    
+
                     LOGM_INFO(TAG, "Local MQTT Bridge stopped - Uptime: %ld seconds, "
-                             "Messages forwarded: %zu, Messages dropped: %zu", 
+                             "Messages forwarded: %zu, Messages dropped: %zu",
                              uptime.count(), messagesForwarded.load(), messagesDropped.load());
-                    
+
                     return Feature::SUCCESS;
                 }
 
                 void LocalMqttBridgeFeature::loadFromConfig(const PlainConfig& config)
                 {
                     bridgeConfig = config.localMqttBridge;
-                    LOGM_INFO(TAG, "Loaded configuration - enabled: %s, routes: %zu", 
-                              bridgeConfig.enabled ? "true" : "false", 
+                    LOGM_INFO(TAG, "Loaded configuration - enabled: %s, routes: %zu",
+                              bridgeConfig.enabled ? "true" : "false",
                               bridgeConfig.routes.size());
                 }
 
@@ -226,17 +226,17 @@ namespace Aws
                     {
                         // Initialize loop guard
                         loopGuard.reset(new LoopGuard(
-                            bridgeConfig.loopGuard.ttlSeconds, 
+                            bridgeConfig.loopGuard.ttlSeconds,
                             bridgeConfig.loopGuard.maxEntries
                         ));
 
                         // Initialize queues
                         localToAwsQueue.reset(new Queue(
-                            bridgeConfig.queue.maxInMemory, 
+                            bridgeConfig.queue.maxInMemory,
                             5 // heartbeat deduplication window in seconds
                         ));
                         awsToLocalQueue.reset(new Queue(
-                            bridgeConfig.queue.maxInMemory, 
+                            bridgeConfig.queue.maxInMemory,
                             5 // heartbeat deduplication window in seconds
                         ));
 
@@ -263,35 +263,47 @@ namespace Aws
 
                 bool LocalMqttBridgeFeature::setupConnections()
                 {
+                    // Prepare route matcher and list of up-route topics (expanded now for fixed placeholders)
+                    std::string tn = getThingName();
+                    routeMatcher->addRoutes(bridgeConfig.routes, tn);
+                    {
+                        std::lock_guard<std::mutex> lock(subscriptionMutex);
+                        upRouteLocalTopics.clear();
+                        for (const auto &route : bridgeConfig.routes)
+                        {
+                            if (route.direction == "up" && !route.localTopic.empty())
+                            {
+                                upRouteLocalTopics.push_back(expandTopic(route.localTopic, tn));
+                            }
+                        }
+                    }
+
+                    // Set connection callback to (re)subscribe after connect events
+                    localClient->setConnectionCallback([this](bool connected, int /*reason*/){
+                        if (connected)
+                        {
+                            subscribeUpRouteTopicsIfConnected(!initialLocalSubsDone.load());
+                            initialLocalSubsDone.store(true);
+                        }
+                        else
+                        {
+                            // On disconnect we allow resubscribe after reconnect
+                        }
+                    });
+
                     localClient->start();
-                    bool localConnected = localClient->connect(
+                    bool localConnectInitiated = localClient->connect(
                         bridgeConfig.local.host,
                         bridgeConfig.local.port,
                         60,
                         bridgeConfig.local.username,
                         bridgeConfig.local.password);
-                    if (!localConnected)
+                    if (!localConnectInitiated)
                     {
-                        LOGM_ERROR(TAG, "%s", "Failed to connect to local MQTT broker");
+                        LOGM_ERROR(TAG, "%s", "Failed to initiate connection to local MQTT broker");
                         return false;
                     }
-                    std::string tn = getThingName();
-                    routeMatcher->addRoutes(bridgeConfig.routes, tn);
-                    for (const auto &route : bridgeConfig.routes)
-                    {
-                        if (route.direction == "up" && !route.localTopic.empty())
-                        {
-                            std::string expanded = expandTopic(route.localTopic, tn);
-                            if (!localClient->subscribe(expanded, route.qos))
-                            {
-                                LOGM_WARN(TAG, "Failed to subscribe to local topic: %s", expanded.c_str());
-                            }
-                            else
-                            {
-                                LOGM_INFO(TAG, "Subscribed to local topic: %s", expanded.c_str());
-                            }
-                        }
-                    }
+                    // Subscriptions will occur asynchronously when onConnect callback fires
                     auto connection = resourceManager->getConnection();
                     if (!connection)
                     {
@@ -336,6 +348,26 @@ namespace Aws
                         }
                     }
                     return true;
+                }
+
+                void LocalMqttBridgeFeature::subscribeUpRouteTopicsIfConnected(bool forceResubscribe)
+                {
+                    if (!localClient || !localClient->isConnected())
+                    {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(subscriptionMutex);
+                    for (const auto &topic : upRouteLocalTopics)
+                    {
+                        if (!localClient->subscribe(topic, 0))
+                        {
+                            LOGM_WARN(TAG, "Deferred subscribe failed for local topic: %s", topic.c_str());
+                        }
+                        else
+                        {
+                            LOGM_INFO(TAG, "(Re)subscribed to local topic: %s", topic.c_str());
+                        }
+                    }
                 }
 
                 void LocalMqttBridgeFeature::cleanup()
@@ -440,23 +472,23 @@ namespace Aws
                                 if (connection)
                                 {
                                     Aws::Crt::ByteBuf payloadBuf = Aws::Crt::ByteBufFromArray(
-                                        reinterpret_cast<const uint8_t*>(taggedPayload.data()), 
+                                        reinterpret_cast<const uint8_t*>(taggedPayload.data()),
                                         taggedPayload.size()
                                     );
-                                    
+
                                     auto onPubAck = [awsTopic](Aws::Crt::Mqtt::MqttConnection&, uint16_t, int errorCode) {
                                         if (errorCode == 0)
                                         {
-                                            LOGM_DEBUG(TAG, "Successfully published to AWS IoT topic: %s", 
+                                            LOGM_DEBUG(TAG, "Successfully published to AWS IoT topic: %s",
                                                       awsTopic.c_str());
                                         }
                                         else
                                         {
-                                            LOGM_ERROR(TAG, "Failed to publish to AWS IoT topic %s, error: %d", 
+                                            LOGM_ERROR(TAG, "Failed to publish to AWS IoT topic %s, error: %d",
                                                       awsTopic.c_str(), errorCode);
                                         }
                                     };
-                                    
+
                                     int desiredQos = matchedRoute->qos;
                                     if (desiredQos == 2)
                                     {
@@ -468,23 +500,23 @@ namespace Aws
                                                                            false, // retain
                                                                            payloadBuf,
                                                                            onPubAck);
-                                    
+
                                     if (packetId != 0)
                                     {
                                         messagesForwarded++;
-                                        LOGM_DEBUG(TAG, "Forwarded message from local to AWS: %s -> %s", 
+                                        LOGM_DEBUG(TAG, "Forwarded message from local to AWS: %s -> %s",
                                                   message.topic.c_str(), awsTopic.c_str());
                                     }
                                     else
                                     {
-                                        LOGM_ERROR(TAG, "Failed to initiate publish to AWS IoT topic: %s", 
+                                        LOGM_ERROR(TAG, "Failed to initiate publish to AWS IoT topic: %s",
                                                   awsTopic.c_str());
                                         messagesDropped++;
                                     }
                                 }
                                 else
                                 {
-                                    LOGM_ERROR(TAG, "No AWS IoT connection available for publishing to: %s", 
+                                    LOGM_ERROR(TAG, "No AWS IoT connection available for publishing to: %s",
                                               awsTopic.c_str());
                                     messagesDropped++;
                                 }
@@ -532,20 +564,20 @@ namespace Aws
                                 if (localClient && localClient->isConnected())
                                 {
                                     bool published = localClient->publish(
-                                        localTopic, 
-                                        cleanPayload, 
+                                        localTopic,
+                                        cleanPayload,
                                         matchResult->route->qos
                                     );
 
                                     if (published)
                                     {
                                         messagesForwarded++;
-                                        LOGM_DEBUG(TAG, "Forwarded message from AWS to local: %s -> %s", 
+                                        LOGM_DEBUG(TAG, "Forwarded message from AWS to local: %s -> %s",
                                                   message.topic.c_str(), localTopic.c_str());
                                     }
                                     else
                                     {
-                                        LOGM_WARN(TAG, "Failed to publish to local broker: %s", 
+                                        LOGM_WARN(TAG, "Failed to publish to local broker: %s",
                                                  localTopic.c_str());
                                         messagesDropped++;
                                     }
@@ -567,7 +599,7 @@ namespace Aws
                     LOGM_INFO(TAG, "%s", "AWS-to-local message forwarding thread stopped");
                 }
 
-                void LocalMqttBridgeFeature::handleLocalMessage(const std::string& topic, 
+                void LocalMqttBridgeFeature::handleLocalMessage(const std::string& topic,
                                                                const void* payload, int payloadLen)
                 {
                     if (!running.load())
@@ -597,7 +629,7 @@ namespace Aws
                     }
                 }
 
-                void LocalMqttBridgeFeature::handleAwsMessage(const std::string& topic, 
+                void LocalMqttBridgeFeature::handleAwsMessage(const std::string& topic,
                                                              const std::string& payload)
                 {
                     if (!running.load())
@@ -618,11 +650,11 @@ namespace Aws
                     return thingName;
                 }
 
-                std::string LocalMqttBridgeFeature::expandTopic(const std::string& topicTemplate, 
+                std::string LocalMqttBridgeFeature::expandTopic(const std::string& topicTemplate,
                                                                const std::string& thingName) const
                 {
                     std::string result = topicTemplate;
-                    
+
                     // Replace ${thingName} placeholder
                     size_t pos = 0;
                     while ((pos = result.find("${thingName}", pos)) != std::string::npos)
@@ -630,7 +662,7 @@ namespace Aws
                         result.replace(pos, 12, thingName);
                         pos += thingName.length();
                     }
-                    
+
                     return result;
                 }
 

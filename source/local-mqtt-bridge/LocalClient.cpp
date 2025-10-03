@@ -149,7 +149,7 @@ namespace Aws
                         return false;
                     }
 
-                    LOGM_INFO(TAG, "Subscribed to topic: %s (QoS %d)", topic.c_str(), qos);
+                    LOGM_DEBUG(TAG, "Subscribed to topic: %s (QoS %d)", topic.c_str(), qos);
                     return true;
                 }
 
@@ -169,7 +169,7 @@ namespace Aws
                         return false;
                     }
 
-                    LOGM_INFO(TAG, "Unsubscribed from topic: %s", topic.c_str());
+                    LOGM_DEBUG(TAG, "Unsubscribed from topic: %s", topic.c_str());
                     return true;
                 }
 

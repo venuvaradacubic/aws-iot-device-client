@@ -51,7 +51,7 @@ namespace Aws
                         else if (route.direction == "down")
                         {
                             CompiledRoute compiledRoute(route);
-                            try 
+                            try
                             {
                                 compiledRoute.pattern = compileAwsTopicPattern(route.awsTopic, compiledRoute.captureNames);
                                 downRoutes.push_back(std::move(compiledRoute));
@@ -64,7 +64,7 @@ namespace Aws
                         }
                     }
 
-                    LOGM_INFO(TAG, "Loaded %zu up routes and %zu down routes", upRoutes.size(), downRoutes.size());
+                    LOGM_DEBUG(TAG, "Loaded %zu up routes and %zu down routes", upRoutes.size(), downRoutes.size());
                 }
 
                 const Route* RouteMatcher::matchUp(const std::string& localTopic) const
@@ -112,37 +112,37 @@ namespace Aws
                         if (std::regex_match(awsTopic, matches, compiledRoute.pattern))
                         {
                             std::map<std::string, std::string> variables;
-                            
+
                             // Extract captured variables
                             for (size_t i = 1; i < matches.size() && (i - 1) < compiledRoute.captureNames.size(); ++i)
                             {
                                 const std::string& varName = compiledRoute.captureNames[i - 1];
                                 variables[varName] = matches[i].str();
                             }
-                            
+
                             return std::unique_ptr<MatchResult>(new MatchResult(&compiledRoute.route, variables));
                         }
                     }
                     return std::unique_ptr<MatchResult>(new MatchResult(nullptr));
                 }
 
-                std::string RouteMatcher::generateLocalTopic(const Route* route, 
+                std::string RouteMatcher::generateLocalTopic(const Route* route,
                                                            const std::map<std::string, std::string>& variables) const
                 {
                     if (!route || route->localTopicTemplate.empty())
                     {
                         return "";
                     }
-                    
+
                     return expandTopicTemplate(route->localTopicTemplate, thingName, variables);
                 }
 
-                std::regex RouteMatcher::compileAwsTopicPattern(const std::string& awsTopic, 
+                std::regex RouteMatcher::compileAwsTopicPattern(const std::string& awsTopic,
                                                               std::vector<std::string>& captureNames) const
                 {
                     captureNames.clear();
                     std::string pattern = awsTopic;
-                    
+
                     // First expand ${thingName} placeholder
                     size_t pos = 0;
                     while ((pos = pattern.find("${thingName}", pos)) != std::string::npos)
@@ -150,11 +150,11 @@ namespace Aws
                         pattern.replace(pos, 12, thingName);
                         pos += thingName.length();
                     }
-                    
+
                     // Escape regex special characters except + and #
                     std::string escapedPattern;
                     int matchCount = 0;
-                    
+
                     for (size_t i = 0; i < pattern.length(); ++i)
                     {
                         char c = pattern[i];
@@ -171,8 +171,8 @@ namespace Aws
                             captureNames.push_back("tail");
                             escapedPattern += "(.*)";
                         }
-                        else if (c == '.' || c == '^' || c == '$' || c == '*' || c == '?' || 
-                                c == '[' || c == ']' || c == '{' || c == '}' || c == '(' || 
+                        else if (c == '.' || c == '^' || c == '$' || c == '*' || c == '?' ||
+                                c == '[' || c == ']' || c == '{' || c == '}' || c == '(' ||
                                 c == ')' || c == '|' || c == '\\')
                         {
                             // Escape regex special characters
@@ -184,9 +184,9 @@ namespace Aws
                             escapedPattern += c;
                         }
                     }
-                    
+
                     LOGM_DEBUG(TAG, "AWS topic pattern: %s -> regex: %s", awsTopic.c_str(), escapedPattern.c_str());
-                    
+
                     return std::regex(escapedPattern);
                 }
 
@@ -198,13 +198,13 @@ namespace Aws
                         // Multi-level wildcards not supported in local topics for up routes
                         return false;
                     }
-                    
+
                     if (pattern.find('+') == std::string::npos)
                     {
                         // No wildcards, exact match
                         return topic == pattern;
                     }
-                    
+
                     // Split into segments and match with + wildcards
                     auto splitTopic = [](const std::string& str) -> std::vector<std::string> {
                         std::vector<std::string> segments;
@@ -216,15 +216,15 @@ namespace Aws
                         }
                         return segments;
                     };
-                    
+
                     std::vector<std::string> topicSegments = splitTopic(topic);
                     std::vector<std::string> patternSegments = splitTopic(pattern);
-                    
+
                     if (topicSegments.size() != patternSegments.size())
                     {
                         return false;
                     }
-                    
+
                     for (size_t i = 0; i < topicSegments.size(); ++i)
                     {
                         if (patternSegments[i] != "+" && patternSegments[i] != topicSegments[i])
@@ -232,7 +232,7 @@ namespace Aws
                             return false;
                         }
                     }
-                    
+
                     return true;
                 }
 
@@ -249,8 +249,8 @@ namespace Aws
                             captureNames.push_back("match" + std::to_string(matchCount));
                             pattern += "([^/]+)";
                         }
-                        else if (c == '.' || c == '^' || c == '$' || c == '*' || c == '?' || 
-                                 c == '[' || c == ']' || c == '{' || c == '}' || c == '(' || 
+                        else if (c == '.' || c == '^' || c == '$' || c == '*' || c == '?' ||
+                                 c == '[' || c == ']' || c == '{' || c == '}' || c == '(' ||
                                  c == ')' || c == '|' || c == '\\')
                         {
                             pattern += '\\';

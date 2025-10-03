@@ -17,6 +17,7 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#include <unordered_set>
 
 namespace Aws
 {
@@ -76,6 +77,8 @@ namespace Aws
                     std::unique_ptr<LocalClient> localClient;
                     // Track topics that need subscription (for up routes)
                     std::vector<std::string> upRouteLocalTopics;
+                    // Track currently subscribed local topics to avoid redundant operations
+                    std::unordered_set<std::string> subscribedLocalTopics;
                     // Guard for subscription list
                     std::mutex subscriptionMutex;
                     // Flag to know if initial subscription pass done after first connect
@@ -90,6 +93,10 @@ namespace Aws
                     std::atomic<size_t> messagesForwarded{0};
                     std::atomic<size_t> messagesDropped{0};
                     std::chrono::steady_clock::time_point startTime;
+
+                    // Debounce for sync control messages
+                    std::chrono::steady_clock::time_point lastSyncRequestTime{std::chrono::steady_clock::time_point::min()};
+                    const std::chrono::milliseconds syncDebounceWindow{1500};
 
                     /**
                      * @brief Load configuration from PlainConfig

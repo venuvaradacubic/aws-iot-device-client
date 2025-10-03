@@ -286,12 +286,12 @@ namespace Aws
                     // Prepare route matcher and list of up-route topics (expanded now for fixed placeholders)
                     std::string tn = getThingName();
                     // Try to load external routes if configured (will fallback to input file internally if output is empty)
-                    reloadRoutesFromExternalIfConfigured("startup");
-                    routeMatcher->addRoutes(bridgeConfig.routes, tn);
-                    // Prepare sync control AWS topic
-                    syncControlAwsTopic = "devices/${thingName}/control/local-mqtt-bridge/sync";
-                    syncControlAwsTopic = expandTopic(syncControlAwsTopic, tn);
+                    // Note: reloadRoutesFromExternalIfConfigured will rebuild matcher and resubscribe as needed when it applies.
+                    bool reloaded = reloadRoutesFromExternalIfConfigured("startup");
+                    if (!reloaded)
                     {
+                        // No external reload occurred; build matcher and topic list from existing config
+                        routeMatcher->addRoutes(bridgeConfig.routes, tn);
                         std::lock_guard<std::mutex> lock(subscriptionMutex);
                         upRouteLocalTopics.clear();
                         for (const auto &route : bridgeConfig.routes)
@@ -302,19 +302,33 @@ namespace Aws
                             }
                         }
                     }
+                    // Prepare sync control AWS topic
+                    syncControlAwsTopic = "devices/${thingName}/control/local-mqtt-bridge/sync";
+                    syncControlAwsTopic = expandTopic(syncControlAwsTopic, tn);
+                    // upRouteLocalTopics will be prepared by applyRoutesAndResubscribe during reload
 
                     // Set connection callback to (re)subscribe after connect events
                     localClient->setConnectionCallback([this](bool connected, int /*reason*/){
                         if (connected)
                         {
-                            subscribeUpRouteTopicsIfConnected(!initialLocalSubsDone.load());
-                            initialLocalSubsDone.store(true);
-                            // On first successful local connect, request a sync of up routes to pull retained states
-                            requestSyncUpRoutes("initial-connect");
+                            // On first successful local connect, trigger a one-time explicit sync to pull retained messages
+                            // (which will force resubscribe). On reconnects, perform a normal subscribe pass.
+                            bool first = !initialLocalSubsDone.load();
+                            if (first)
+                            {
+                                initialLocalSubsDone.store(true);
+                                requestSyncUpRoutes("initial-connect");
+                            }
+                            else
+                            {
+                                subscribeUpRouteTopicsIfConnected(false);
+                            }
                         }
                         else
                         {
-                            // On disconnect we allow resubscribe after reconnect
+                            // Clear local subscription tracking so we re-subscribe after reconnect
+                            std::lock_guard<std::mutex> lock(subscriptionMutex);
+                            subscribedLocalTopics.clear();
                         }
                     });
 
@@ -358,7 +372,7 @@ namespace Aws
                             {
                                 if (errorCode == 0)
                                 {
-                                    LOGM_INFO(LocalMqttBridgeFeature::TAG, "Successfully subscribed to AWS IoT topic: %s", expandedAws.c_str());
+                                    LOGM_DEBUG(LocalMqttBridgeFeature::TAG, "Subscribed to AWS IoT topic: %s", expandedAws.c_str());
                                 }
                                 else
                                 {
@@ -391,7 +405,7 @@ namespace Aws
                         {
                             if (errorCode == 0)
                             {
-                                LOGM_INFO(LocalMqttBridgeFeature::TAG, "Subscribed to AWS sync control topic: %s", this->syncControlAwsTopic.c_str());
+                                LOGM_DEBUG(LocalMqttBridgeFeature::TAG, "Subscribed to AWS sync control topic: %s", this->syncControlAwsTopic.c_str());
                             }
                             else
                             {
@@ -416,20 +430,40 @@ namespace Aws
                         return;
                     }
                     std::lock_guard<std::mutex> lock(subscriptionMutex);
-                    for (const auto &topic : upRouteLocalTopics)
+                    // Build a set of desired topics for quick diff
+                    std::unordered_set<std::string> desired(upRouteLocalTopics.begin(), upRouteLocalTopics.end());
+
+                    // Unsubscribe topics that are no longer desired or when forceResubscribe is requested
+                    for (auto it = subscribedLocalTopics.begin(); it != subscribedLocalTopics.end(); )
                     {
-                        if (forceResubscribe)
+                        const std::string &t = *it;
+                        bool shouldUnsub = (desired.find(t) == desired.end()) || forceResubscribe;
+                        if (shouldUnsub)
                         {
-                            // Unsubscribe first to ensure retained messages will be re-delivered on new subscribe
-                            localClient->unsubscribe(topic);
-                        }
-                        if (!localClient->subscribe(topic, 0))
-                        {
-                            LOGM_WARN(TAG, "Deferred subscribe failed for local topic: %s", topic.c_str());
+                            localClient->unsubscribe(t);
+                            LOGM_DEBUG(TAG, "Unsubscribed local topic: %s", t.c_str());
+                            it = subscribedLocalTopics.erase(it);
                         }
                         else
                         {
-                            LOGM_INFO(TAG, "(Re)subscribed to local topic: %s", topic.c_str());
+                            ++it;
+                        }
+                    }
+
+                    // Subscribe topics that are desired but not currently subscribed
+                    for (const auto &topic : upRouteLocalTopics)
+                    {
+                        if (subscribedLocalTopics.find(topic) == subscribedLocalTopics.end())
+                        {
+                            if (!localClient->subscribe(topic, 0))
+                            {
+                                LOGM_WARN(TAG, "Subscribe failed for local topic: %s", topic.c_str());
+                            }
+                            else
+                            {
+                                subscribedLocalTopics.insert(topic);
+                                LOGM_DEBUG(TAG, "Subscribed local topic: %s", topic.c_str());
+                            }
                         }
                     }
                 }
@@ -696,6 +730,13 @@ namespace Aws
                     // Always allow control topic handling
                     if (topic == syncControlAwsTopic)
                     {
+                        auto now = std::chrono::steady_clock::now();
+                        if (now - lastSyncRequestTime < syncDebounceWindow)
+                        {
+                            LOGM_DEBUG(TAG, "Ignored sync request due to debounce window: %s", topic.c_str());
+                            return;
+                        }
+                        lastSyncRequestTime = now;
                         LOGM_INFO(TAG, "Received sync request from AWS: %s", topic.c_str());
                         requestSyncUpRoutes("aws-sync-request");
                         return;
@@ -745,8 +786,11 @@ namespace Aws
                         LOGM_INFO(TAG, "%s", "Syncing up-route retained state");
                     }
                     // Re-subscribe to up-route topics to trigger retained message delivery
-                    // Also reload external routes (if changed) before resubscribing
-                    reloadRoutesFromExternalIfConfigured("sync");
+                    // For initial-connect, we skip reloading routes to avoid duplicate load/apply noise
+                    if (!(reason && std::string(reason) == "initial-connect"))
+                    {
+                        reloadRoutesFromExternalIfConfigured("sync");
+                    }
                     subscribeUpRouteTopicsIfConnected(true);
                 }
 
@@ -830,6 +874,7 @@ namespace Aws
                     }
 
                     // Fallback rule: if output has zero routes and we have an input fallback, read from input
+                    bool loadedFromFallback = false;
                     if (newRoutes.empty() && !sampleShadowInputFile.empty())
                     {
                         std::ifstream in2(sampleShadowInputFile.c_str(), std::ios::in | std::ios::binary);
@@ -848,7 +893,8 @@ namespace Aws
                                         if (lmb.ValueExists("routes") && lmb.GetJsonObject("routes").IsListType())
                                         {
                                             parseRoutes(lmb.GetJsonObject("routes"));
-                                            LOGM_INFO(TAG, "Loaded %zu routes from fallback input %s", newRoutes.size(), sampleShadowInputFile.c_str());
+                                            loadedFromFallback = true;
+                                            LOGM_DEBUG(TAG, "Loaded %zu routes from fallback input %s", newRoutes.size(), sampleShadowInputFile.c_str());
                                         }
                                     }
                                 }
@@ -863,8 +909,9 @@ namespace Aws
                             LOGM_WARN(TAG, "Routes fallback input file not readable: %s", sampleShadowInputFile.c_str());
                         }
                     }
-
-                    LOGM_INFO(TAG, "Loaded %zu routes from %s (%s)", newRoutes.size(), path.c_str(), reason ? reason : "");
+                    // Only DEBUG here; INFO summary is emitted in applyRoutesAndResubscribe()
+                    LOGM_DEBUG(TAG, "Loaded %zu routes from %s (%s)%s", newRoutes.size(), path.c_str(), reason ? reason : "",
+                               loadedFromFallback ? ", source=fallback" : "");
                     applyRoutesAndResubscribe(newRoutes, true);
                     return true;
                 }
@@ -888,7 +935,13 @@ namespace Aws
                             }
                         }
                     }
-                    // Resubscribe to ensure we pick up retained states
+                    // INFO summary once per apply
+                    size_t upCount = 0, downCount = 0;
+                    for (const auto &route : bridgeConfig.routes) { if (route.direction == "up") upCount++; else if (route.direction == "down") downCount++; }
+                    LOGM_INFO(TAG, "Applied %zu routes (%zu up, %zu down) forceResubscribe=%s",
+                              bridgeConfig.routes.size(), upCount, downCount,
+                              forceResubscribe ? "true" : "false");
+                    // Resubscribe/update subscriptions as needed
                     subscribeUpRouteTopicsIfConnected(forceResubscribe);
                 }
 

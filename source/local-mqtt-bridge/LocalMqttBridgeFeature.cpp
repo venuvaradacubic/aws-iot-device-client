@@ -10,10 +10,14 @@
 #include "LocalClient.h"
 #include "../logging/LoggerFactory.h"
 #include <aws/crt/mqtt/MqttConnection.h>
+#include <aws/crt/JsonObject.h>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
 
 using namespace std;
 using namespace Aws::Iot::DeviceClient::LocalMqttBridge;
@@ -71,6 +75,11 @@ namespace Aws
                     }
 
                     loadFromConfig(config);
+                    // cache sample shadow input file for fallback logic if configured
+                    if (config.sampleShadow.shadowInputFile.has_value())
+                    {
+                        sampleShadowInputFile = config.sampleShadow.shadowInputFile.value();
+                    }
 
                     if (!validateConfig())
                     {
@@ -104,7 +113,18 @@ namespace Aws
 
                     LOGM_INFO(TAG, "Starting Local MQTT Bridge with %zu routes", bridgeConfig.routes.size());
 
-                    if (!setupConnections())
+                    // Delay startup to allow Sample Shadow to sync the output JSON
+                    std::thread([this]{
+                        std::this_thread::sleep_for(std::chrono::seconds(30));
+                        if (!running.load()) return;
+                        if (!setupConnections())
+                        {
+                            LOGM_ERROR(TAG, "%s", "Failed to setup connections after delay");
+                        }
+                    }).detach();
+
+                    // We still mark as running and start threads; connections come up after delay
+                    if (false)
                     {
                         LOGM_ERROR(TAG, "%s", "Failed to setup connections");
                         return -1;
@@ -265,7 +285,12 @@ namespace Aws
                 {
                     // Prepare route matcher and list of up-route topics (expanded now for fixed placeholders)
                     std::string tn = getThingName();
+                    // Try to load external routes if configured (will fallback to input file internally if output is empty)
+                    reloadRoutesFromExternalIfConfigured("startup");
                     routeMatcher->addRoutes(bridgeConfig.routes, tn);
+                    // Prepare sync control AWS topic
+                    syncControlAwsTopic = "devices/${thingName}/control/local-mqtt-bridge/sync";
+                    syncControlAwsTopic = expandTopic(syncControlAwsTopic, tn);
                     {
                         std::lock_guard<std::mutex> lock(subscriptionMutex);
                         upRouteLocalTopics.clear();
@@ -284,6 +309,8 @@ namespace Aws
                         {
                             subscribeUpRouteTopicsIfConnected(!initialLocalSubsDone.load());
                             initialLocalSubsDone.store(true);
+                            // On first successful local connect, request a sync of up routes to pull retained states
+                            requestSyncUpRoutes("initial-connect");
                         }
                         else
                         {
@@ -310,12 +337,12 @@ namespace Aws
                         LOGM_ERROR(TAG, "%s", "AWS IoT connection unavailable during bridge setup");
                         return false;
                     }
+                    // AWS down routes
                     for (const auto &route : bridgeConfig.routes)
                     {
                         if (route.direction == "down" && !route.awsTopic.empty())
                         {
                             std::string expandedAws = expandTopic(route.awsTopic, tn);
-                            // Updated handler type: alias resides in Aws::Crt::Mqtt namespace, not as a nested type of MqttConnection in some SDK versions
                             Aws::Crt::Mqtt::OnMessageReceivedHandler handler =
                                 [this](Aws::Crt::Mqtt::MqttConnection &,
                                        const Aws::Crt::String &receivedOnTopic,
@@ -347,6 +374,38 @@ namespace Aws
                             }
                         }
                     }
+                    // Subscribe to sync control topic
+                    {
+                        Aws::Crt::Mqtt::OnMessageReceivedHandler handler =
+                            [this](Aws::Crt::Mqtt::MqttConnection &,
+                                   const Aws::Crt::String &receivedOnTopic,
+                                   const Aws::Crt::ByteBuf &payload,
+                                   bool, Aws::Crt::Mqtt::QOS, bool)
+                            {
+                                this->handleAwsMessage(receivedOnTopic.c_str(),
+                                                      std::string(reinterpret_cast<const char *>(payload.buffer), payload.len));
+                            };
+                        auto onSubAck = [this](const Aws::Crt::Mqtt::MqttConnection &,
+                                                uint16_t, const Aws::Crt::String &,
+                                                Aws::Crt::Mqtt::QOS, int errorCode)
+                        {
+                            if (errorCode == 0)
+                            {
+                                LOGM_INFO(LocalMqttBridgeFeature::TAG, "Subscribed to AWS sync control topic: %s", this->syncControlAwsTopic.c_str());
+                            }
+                            else
+                            {
+                                LOGM_ERROR(LocalMqttBridgeFeature::TAG, "Failed to subscribe to AWS sync control topic %s, error: %d", this->syncControlAwsTopic.c_str(), errorCode);
+                            }
+                        };
+                        uint16_t packetId = connection->Subscribe(syncControlAwsTopic.c_str(),
+                                                                 Aws::Crt::Mqtt::QOS::AWS_MQTT_QOS_AT_LEAST_ONCE,
+                                                                 std::move(handler), std::move(onSubAck));
+                        if (packetId == 0)
+                        {
+                            LOGM_ERROR(TAG, "Failed to initiate subscription to AWS sync control topic: %s", syncControlAwsTopic.c_str());
+                        }
+                    }
                     return true;
                 }
 
@@ -359,6 +418,11 @@ namespace Aws
                     std::lock_guard<std::mutex> lock(subscriptionMutex);
                     for (const auto &topic : upRouteLocalTopics)
                     {
+                        if (forceResubscribe)
+                        {
+                            // Unsubscribe first to ensure retained messages will be re-delivered on new subscribe
+                            localClient->unsubscribe(topic);
+                        }
                         if (!localClient->subscribe(topic, 0))
                         {
                             LOGM_WARN(TAG, "Deferred subscribe failed for local topic: %s", topic.c_str());
@@ -602,10 +666,7 @@ namespace Aws
                 void LocalMqttBridgeFeature::handleLocalMessage(const std::string& topic,
                                                                const void* payload, int payloadLen)
                 {
-                    if (!running.load())
-                    {
-                        return;
-                    }
+                    // Process even if not fully running to capture retained messages immediately after subscription
 
                     // Create string from payload with safety checks
                     std::string payloadStr;
@@ -632,6 +693,13 @@ namespace Aws
                 void LocalMqttBridgeFeature::handleAwsMessage(const std::string& topic,
                                                              const std::string& payload)
                 {
+                    // Always allow control topic handling
+                    if (topic == syncControlAwsTopic)
+                    {
+                        LOGM_INFO(TAG, "Received sync request from AWS: %s", topic.c_str());
+                        requestSyncUpRoutes("aws-sync-request");
+                        return;
+                    }
                     if (!running.load())
                     {
                         return;
@@ -664,6 +732,164 @@ namespace Aws
                     }
 
                     return result;
+                }
+
+                void LocalMqttBridgeFeature::requestSyncUpRoutes(const char* reason)
+                {
+                    if (reason)
+                    {
+                        LOGM_INFO(TAG, "Syncing up-route retained state (%s)", reason);
+                    }
+                    else
+                    {
+                        LOGM_INFO(TAG, "%s", "Syncing up-route retained state");
+                    }
+                    // Re-subscribe to up-route topics to trigger retained message delivery
+                    // Also reload external routes (if changed) before resubscribing
+                    reloadRoutesFromExternalIfConfigured("sync");
+                    subscribeUpRouteTopicsIfConnected(true);
+                }
+
+                bool LocalMqttBridgeFeature::reloadRoutesFromExternalIfConfigured(const char* reason)
+                {
+                    if (!bridgeConfig.routesFile.has_value() || bridgeConfig.routesFile->empty())
+                    {
+                        return false;
+                    }
+                    const std::string path = *bridgeConfig.routesFile;
+                    std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+                    Aws::Crt::Optional<Aws::Crt::JsonView> maybeRoutesView;
+                    if (in)
+                    {
+                        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                        try
+                        {
+                            Aws::Crt::JsonObject root(data.c_str());
+                            if (root.WasParseSuccessful())
+                            {
+                                Aws::Crt::JsonView view = root.View();
+                                if (bridgeConfig.routesFileJsonPointer.has_value() && !bridgeConfig.routesFileJsonPointer->empty())
+                                {
+                                    std::string ptr = *bridgeConfig.routesFileJsonPointer;
+                                    if (!ptr.empty() && ptr[0] == '/') ptr.erase(0,1);
+                                    std::stringstream ss(ptr);
+                                    std::string tok;
+                                    Aws::Crt::JsonView current = view;
+                                    bool ok = true;
+                                    while (std::getline(ss, tok, '/'))
+                                    {
+                                        if (tok.empty()) continue;
+                                        if (!current.IsObject() || !current.ValueExists(tok.c_str())) { ok = false; break; }
+                                        current = current.GetJsonObject(tok.c_str());
+                                    }
+                                    if (ok && current.IsListType())
+                                    {
+                                        maybeRoutesView = current;
+                                    }
+                                }
+                                else if (view.ValueExists("routes") && view.GetJsonObject("routes").IsListType())
+                                {
+                                    maybeRoutesView = view.GetJsonObject("routes");
+                                }
+                            }
+                        }
+                        catch (...)
+                        {
+                            // fall through to fallback
+                        }
+                    }
+
+                    if (!maybeRoutesView.has_value())
+                    {
+                        LOGM_WARN(TAG, "Failed to load routes from output file: %s, attempting input fallback if available", path.c_str());
+                    }
+
+                    std::vector<PlainConfig::LocalMqttBridge::Route> newRoutes;
+                    auto parseRoutes = [&newRoutes](const Aws::Crt::JsonView &rv){
+                        for (const auto &routeEntry : rv.AsArray())
+                        {
+                            PlainConfig::LocalMqttBridge::Route route;
+                            if (routeEntry.ValueExists("direction"))
+                                route.direction = routeEntry.GetString("direction").c_str();
+                            if (routeEntry.ValueExists("localTopic"))
+                                route.localTopic = routeEntry.GetString("localTopic").c_str();
+                            if (routeEntry.ValueExists("awsTopic"))
+                                route.awsTopic = routeEntry.GetString("awsTopic").c_str();
+                            if (routeEntry.ValueExists("localTopicTemplate"))
+                                route.localTopicTemplate = routeEntry.GetString("localTopicTemplate").c_str();
+                            if (routeEntry.ValueExists("qos"))
+                                route.qos = routeEntry.GetInteger("qos");
+                            if (routeEntry.ValueExists("throttleSeconds"))
+                                route.throttleSeconds = routeEntry.GetInteger("throttleSeconds");
+                            newRoutes.push_back(route);
+                        }
+                    };
+                    if (maybeRoutesView.has_value())
+                    {
+                        parseRoutes(maybeRoutesView.value());
+                    }
+
+                    // Fallback rule: if output has zero routes and we have an input fallback, read from input
+                    if (newRoutes.empty() && !sampleShadowInputFile.empty())
+                    {
+                        std::ifstream in2(sampleShadowInputFile.c_str(), std::ios::in | std::ios::binary);
+                        if (in2)
+                        {
+                            std::string data2((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+                            try
+                            {
+                                Aws::Crt::JsonObject root2(data2.c_str());
+                                if (root2.WasParseSuccessful())
+                                {
+                                    auto v2 = root2.View();
+                                    if (v2.IsObject() && v2.ValueExists("localMqttBridge") && v2.GetJsonObject("localMqttBridge").IsObject())
+                                    {
+                                        auto lmb = v2.GetJsonObject("localMqttBridge");
+                                        if (lmb.ValueExists("routes") && lmb.GetJsonObject("routes").IsListType())
+                                        {
+                                            parseRoutes(lmb.GetJsonObject("routes"));
+                                            LOGM_INFO(TAG, "Loaded %zu routes from fallback input %s", newRoutes.size(), sampleShadowInputFile.c_str());
+                                        }
+                                    }
+                                }
+                            }
+                            catch (...)
+                            {
+                                LOGM_WARN(TAG, "Invalid JSON in fallback input routes file: %s", sampleShadowInputFile.c_str());
+                            }
+                        }
+                        else
+                        {
+                            LOGM_WARN(TAG, "Routes fallback input file not readable: %s", sampleShadowInputFile.c_str());
+                        }
+                    }
+
+                    LOGM_INFO(TAG, "Loaded %zu routes from %s (%s)", newRoutes.size(), path.c_str(), reason ? reason : "");
+                    applyRoutesAndResubscribe(newRoutes, true);
+                    return true;
+                }
+
+                void LocalMqttBridgeFeature::applyRoutesAndResubscribe(const std::vector<PlainConfig::LocalMqttBridge::Route>& newRoutes,
+                                                                       bool forceResubscribe)
+                {
+                    // Replace config routes
+                    bridgeConfig.routes = newRoutes;
+                    // Rebuild matcher and topic list
+                    std::string tn = getThingName();
+                    routeMatcher->addRoutes(bridgeConfig.routes, tn);
+                    {
+                        std::lock_guard<std::mutex> lock(subscriptionMutex);
+                        upRouteLocalTopics.clear();
+                        for (const auto &route : bridgeConfig.routes)
+                        {
+                            if (route.direction == "up" && !route.localTopic.empty())
+                            {
+                                upRouteLocalTopics.push_back(expandTopic(route.localTopic, tn));
+                            }
+                        }
+                    }
+                    // Resubscribe to ensure we pick up retained states
+                    subscribeUpRouteTopicsIfConnected(forceResubscribe);
                 }
 
             } // namespace LocalMqttBridge

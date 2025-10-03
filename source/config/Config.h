@@ -506,6 +506,13 @@ namespace Aws
                         int throttleSeconds{0}; // For up routes only
                     };
 
+                        // Optional: load routes from external JSON file to keep main config small.
+                        // If routesFileJsonPointer is set (JSON Pointer syntax), extract the array at that path.
+                        // Otherwise expect top-level object with key "routes" as an array.
+                        Aws::Crt::Optional<std::string> routesFile;             // e.g., /opt/fgate/aws-iot-device-client/routes.json
+                        Aws::Crt::Optional<std::string> routesFileJsonPointer;  // e.g., /state/reported/localMqttBridge/routes
+                        bool routesFileWatch{true};
+
                     struct QueueConfig
                     {
                         int maxInMemory{200};
@@ -530,6 +537,9 @@ namespace Aws
                     static constexpr char JSON_KEY_ENABLED[] = "enabled";
                     static constexpr char JSON_KEY_LOCAL[] = "local";
                     static constexpr char JSON_KEY_ROUTES[] = "routes";
+                    static constexpr char JSON_KEY_ROUTES_FILE[] = "routesFile";
+                    static constexpr char JSON_KEY_ROUTES_FILE_POINTER[] = "routesFileJsonPointer";
+                    static constexpr char JSON_KEY_ROUTES_FILE_WATCH[] = "routesFileWatch";
                     static constexpr char JSON_KEY_QUEUE[] = "queue";
                     static constexpr char JSON_KEY_LOOP_GUARD[] = "loopGuard";
                     static constexpr char JSON_KEY_METRICS[] = "metrics";

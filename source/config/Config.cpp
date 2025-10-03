@@ -2514,6 +2514,9 @@ constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_LOCAL_MQTT_BRIDGE[];
 constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ENABLED[];
 constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_LOCAL[];
 constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ROUTES[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ROUTES_FILE[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ROUTES_FILE_POINTER[];
+constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_ROUTES_FILE_WATCH[];
 constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_QUEUE[];
 constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_LOOP_GUARD[];
 constexpr char PlainConfig::LocalMqttBridge::JSON_KEY_METRICS[];
@@ -2581,6 +2584,19 @@ bool PlainConfig::LocalMqttBridge::LoadFromJson(const Crt::JsonView &json)
             }
             routes.push_back(route);
         }
+    }
+
+    if (json.ValueExists(JSON_KEY_ROUTES_FILE))
+    {
+        routesFile = json.GetString(JSON_KEY_ROUTES_FILE).c_str();
+    }
+    if (json.ValueExists(JSON_KEY_ROUTES_FILE_POINTER))
+    {
+        routesFileJsonPointer = json.GetString(JSON_KEY_ROUTES_FILE_POINTER).c_str();
+    }
+    if (json.ValueExists(JSON_KEY_ROUTES_FILE_WATCH))
+    {
+        routesFileWatch = json.GetBool(JSON_KEY_ROUTES_FILE_WATCH);
     }
 
     if (json.ValueExists(JSON_KEY_QUEUE) && json.GetJsonObject(JSON_KEY_QUEUE).IsObject())
@@ -2725,7 +2741,7 @@ bool PlainConfig::LocalMqttBridge::Validate() const
 void PlainConfig::LocalMqttBridge::SerializeToObject(Crt::JsonObject &object) const
 {
     object.WithBool(JSON_KEY_ENABLED, enabled);
-    
+
     // Local broker config
     Crt::JsonObject localObj;
     localObj.WithString("host", local.host.c_str());
@@ -2764,6 +2780,16 @@ void PlainConfig::LocalMqttBridge::SerializeToObject(Crt::JsonObject &object) co
         routesArray.push_back(routeObj);
     }
     object.WithArray(JSON_KEY_ROUTES, routesArray);
+
+    if (routesFile.has_value())
+    {
+        object.WithString(JSON_KEY_ROUTES_FILE, routesFile.value().c_str());
+    }
+    if (routesFileJsonPointer.has_value())
+    {
+        object.WithString(JSON_KEY_ROUTES_FILE_POINTER, routesFileJsonPointer.value().c_str());
+    }
+    object.WithBool(JSON_KEY_ROUTES_FILE_WATCH, routesFileWatch);
 
     // Queue config
     Crt::JsonObject queueObj;

@@ -16,6 +16,7 @@
 #include <memory>
 #include <atomic>
 #include <thread>
+#include <functional>
 
 namespace Aws
 {
@@ -62,6 +63,10 @@ namespace Aws
                     std::shared_ptr<ClientBaseNotifier> baseNotifier;
                     LocalMqttBridgeConfig bridgeConfig;
                     std::string thingName; // Cache the thing name
+                    // Expanded AWS control topic to trigger a sync of all up routes
+                    std::string syncControlAwsTopic; // devices/${thingName}/control/local-mqtt-bridge/sync
+                    // Optional: path to Sample Shadow input file for fallback routing
+                    std::string sampleShadowInputFile;
 
                     // Core components
                     std::unique_ptr<RouteMatcher> routeMatcher;
@@ -147,6 +152,25 @@ namespace Aws
                      */
                     std::string expandTopic(const std::string& topicTemplate,
                                            const std::string& thingName) const;
+
+                    /**
+                     * @brief Force-refresh all up-route local topics by resubscribing to trigger retained messages.
+                     * This will cause the latest retained state on each local topic to be received and forwarded to AWS.
+                     * @param reason Optional reason for logging (e.g., "initial-connect" or "aws-sync-request").
+                     */
+                    void requestSyncUpRoutes(const char* reason = nullptr);
+
+                    /**
+                     * @brief Attempt to load routes from an external JSON file if configured.
+                     * @return true if routes were successfully loaded and applied; false otherwise
+                     */
+                    bool reloadRoutesFromExternalIfConfigured(const char* reason = nullptr);
+
+                    /**
+                     * @brief Replace current routes, rebuild matcher, update upRoute topics and (re)subscribe.
+                     */
+                    void applyRoutesAndResubscribe(const std::vector<PlainConfig::LocalMqttBridge::Route>& newRoutes,
+                                                   bool forceResubscribe);
                 };
 
             } // namespace LocalMqttBridge

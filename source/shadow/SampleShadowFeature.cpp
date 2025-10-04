@@ -7,6 +7,7 @@
 #include <aws/crt/UUID.h>
 #include <aws/iotdevicecommon/IotDevice.h>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <sys/stat.h>
@@ -415,7 +416,56 @@ int SampleShadowFeature::start()
         this->stop();
     }
 
-    readAndUpdateShadowFromFile();
+    // Only seed from input file if output shadow doesn't already contain routes
+    bool shouldSeedFromInput = true;
+    if (!outputFile.empty())
+    {
+        std::ifstream out(outputFile.c_str());
+        if (out.is_open())
+        {
+            std::string contents((std::istreambuf_iterator<char>(out)), std::istreambuf_iterator<char>());
+            out.close();
+            if (!contents.empty())
+            {
+                Aws::Crt::JsonObject obj(contents.c_str());
+                if (obj.WasParseSuccessful())
+                {
+                    auto v = obj.View();
+                    // Look for routes at /current/state/reported/localMqttBridge/routes
+                    if (v.IsObject() && v.ValueExists("current") && v.GetJsonObject("current").IsObject())
+                    {
+                        auto cur = v.GetJsonObject("current");
+                        if (cur.ValueExists("state") && cur.GetJsonObject("state").IsObject())
+                        {
+                            auto st = cur.GetJsonObject("state");
+                            if (st.ValueExists("reported") && st.GetJsonObject("reported").IsObject())
+                            {
+                                auto rep = st.GetJsonObject("reported");
+                                if (rep.ValueExists("localMqttBridge") && rep.GetJsonObject("localMqttBridge").IsObject())
+                                {
+                                    auto lmb = rep.GetJsonObject("localMqttBridge");
+                                    if (lmb.ValueExists("routes") && lmb.GetJsonObject("routes").IsListType())
+                                    {
+                                        auto arr = lmb.GetJsonObject("routes").AsArray();
+                                        if (arr.size() > 0)
+                                        {
+                                            shouldSeedFromInput = false;
+                                            LOGM_INFO(TAG, "Output shadow already contains %zu routes; skipping input seed", arr.size());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (shouldSeedFromInput)
+    {
+        readAndUpdateShadowFromFile();
+    }
 
     if (!inputFile.empty())
     {

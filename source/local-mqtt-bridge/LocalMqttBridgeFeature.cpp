@@ -544,8 +544,8 @@ namespace Aws
                                 {
                                     continue; // skip publish this cycle
                                 }
-                                // Tag payload to prevent loops
-                                std::string taggedPayload = PayloadTagger::tagPayload(effectivePayload, "up");
+                                // Do not mutate payload; rely on LoopGuard for loop prevention
+                                std::string taggedPayload = effectivePayload;
 
                                 // Expand AWS topic including ${matchN} variables
                                 std::string awsTopic = matchedRoute->awsTopic;
@@ -709,17 +709,20 @@ namespace Aws
                         payloadStr = std::string(static_cast<const char*>(payload), payloadLen);
                     }
 
-                    // Check if this is a tagged message (to prevent loops)
-                    if (PayloadTagger::isTagged(payloadStr))
-                    {
-                        LOGM_DEBUG(TAG, "Ignoring tagged message from local broker: %s", topic.c_str());
-                        return;
-                    }
+                    // We no longer use payload tagging; LoopGuard handles loop prevention.
 
                     // Queue message for processing
                     if (!localToAwsQueue->push(topic, payloadStr, true))
                     {
-                        LOGM_WARN(TAG, "Failed to queue message from local broker: %s", topic.c_str());
+                        if (Queue::isHeartbeatTopic(topic))
+                        {
+                            // Likely dropped as duplicate within heartbeat window; that's expected
+                            LOGM_DEBUG(TAG, "Dropped duplicate heartbeat from local broker: %s", topic.c_str());
+                        }
+                        else
+                        {
+                            LOGM_WARN(TAG, "Failed to queue message from local broker: %s", topic.c_str());
+                        }
                         messagesDropped++;
                     }
                 }

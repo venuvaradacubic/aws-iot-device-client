@@ -733,13 +733,7 @@ namespace Aws
                     // Always allow control topic handling
                     if (topic == syncControlAwsTopic)
                     {
-                        auto now = std::chrono::steady_clock::now();
-                        if (now - lastSyncRequestTime < syncDebounceWindow)
-                        {
-                            LOGM_DEBUG(TAG, "Ignored sync request due to debounce window: %s", topic.c_str());
-                            return;
-                        }
-                        lastSyncRequestTime = now;
+                        // Always honor on-demand sync requests from AWS; do not debounce
                         LOGM_INFO(TAG, "Received sync request from AWS: %s", topic.c_str());
                         requestSyncUpRoutes("aws-sync-request");
                         return;

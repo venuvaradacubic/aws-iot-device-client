@@ -857,7 +857,7 @@ namespace Aws
 
                         LOGM_INFO(TAG, "%s", "About to open file stream...");
                         std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
-                        LOGM_INFO(TAG, "File stream constructed, checking if opened successfully...");
+                        LOGM_INFO(TAG, "%s", "File stream constructed, checking if opened successfully...");
 
                         if (!in)
                     {

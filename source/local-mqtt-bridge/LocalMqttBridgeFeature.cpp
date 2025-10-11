@@ -124,14 +124,14 @@ namespace Aws
 
                     // Delay connection setup to allow Sample Shadow to write the output JSON
                     std::thread([this]{
-                        LOGM_INFO(TAG, "Waiting 30 seconds for Sample Shadow to prepare routes file...");
+                        LOGM_INFO(TAG, "%s", "Waiting 30 seconds for Sample Shadow to prepare routes file...");
                         std::this_thread::sleep_for(std::chrono::seconds(30));
                         if (!running.load())
                         {
-                            LOGM_WARN(TAG, "Bridge stopped before connections could be established");
+                            LOGM_WARN(TAG, "%s", "Bridge stopped before connections could be established");
                             return;
                         }
-                        LOGM_INFO(TAG, "Delay complete, setting up connections and loading routes...");
+                        LOGM_INFO(TAG, "%s", "Delay complete, setting up connections and loading routes...");
                         if (!setupConnections())
                         {
                             LOGM_ERROR(TAG, "%s", "Failed to setup connections after delay");
@@ -140,7 +140,7 @@ namespace Aws
                         }
                         else
                         {
-                            LOGM_INFO(TAG, "Connections established and routes loaded successfully");
+                            LOGM_INFO(TAG, "%s", "Connections established and routes loaded successfully");
                         }
                     }).detach();
 
@@ -293,7 +293,7 @@ namespace Aws
                     // Ensure routeMatcher is valid
                     if (!routeMatcher)
                     {
-                        LOGM_ERROR(TAG, "RouteMatcher not initialized");
+                        LOGM_ERROR(TAG, "%s", "RouteMatcher not initialized");
                         return false;
                     }
 
@@ -326,7 +326,7 @@ namespace Aws
                     // Ensure local client is valid
                     if (!localClient)
                     {
-                        LOGM_ERROR(TAG, "Local MQTT client not initialized");
+                        LOGM_ERROR(TAG, "%s", "Local MQTT client not initialized");
                         return false;
                     }
 
@@ -818,7 +818,7 @@ namespace Aws
                 {
                     if (!bridgeConfig.routesFile.has_value() || bridgeConfig.routesFile->empty())
                     {
-                        LOGM_DEBUG(TAG, "No external routes file configured");
+                        LOGM_DEBUG(TAG, "%s", "No external routes file configured");
                         return false;
                     }
                     const std::string path = *bridgeConfig.routesFile;
@@ -975,7 +975,7 @@ namespace Aws
                 {
                     if (!routeMatcher)
                     {
-                        LOGM_ERROR(TAG, "Cannot apply routes: RouteMatcher not initialized");
+                        LOGM_ERROR(TAG, "%s", "Cannot apply routes: RouteMatcher not initialized");
                         return;
                     }
 

@@ -18,6 +18,8 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <sys/stat.h>
+#include <cerrno>
 
 using namespace std;
 using namespace Aws::Iot::DeviceClient::LocalMqttBridge;
@@ -835,8 +837,29 @@ namespace Aws
                     LOGM_INFO(TAG, "Attempting to load routes from: %s (reason: %s)",
                               path.c_str(), reason ? reason : "unknown");
 
-                    std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
-                    if (!in)
+                    try
+                    {
+                        // Check if file exists and is readable
+                        struct stat fileStat;
+                        if (stat(path.c_str(), &fileStat) != 0)
+                        {
+                            LOGM_ERROR(TAG, "File does not exist or cannot stat: %s (errno: %d)", path.c_str(), errno);
+                            return false;
+                        }
+                        LOGM_INFO(TAG, "File exists, size: %ld bytes, mode: 0%o", (long)fileStat.st_size, fileStat.st_mode & 0777);
+
+                        // Check if it's a regular file
+                        if (!S_ISREG(fileStat.st_mode))
+                        {
+                            LOGM_ERROR(TAG, "Path is not a regular file: %s", path.c_str());
+                            return false;
+                        }
+
+                        LOGM_INFO(TAG, "%s", "About to open file stream...");
+                        std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+                        LOGM_INFO(TAG, "File stream constructed, checking if opened successfully...");
+
+                        if (!in)
                     {
                         LOGM_WARN(TAG, "Routes file does not exist or is not readable: %s", path.c_str());
                         // Try fallback to input file
@@ -1063,6 +1086,17 @@ namespace Aws
                     }
 
                     return true;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        LOGM_ERROR(TAG, "FATAL: Exception in reloadRoutesFromExternalIfConfigured: %s", e.what());
+                        return false;
+                    }
+                    catch (...)
+                    {
+                        LOGM_ERROR(TAG, "%s", "FATAL: Unknown exception in reloadRoutesFromExternalIfConfigured");
+                        return false;
+                    }
                 }
 
                 void LocalMqttBridgeFeature::applyRoutesAndResubscribe(const std::vector<PlainConfig::LocalMqttBridge::Route>& newRoutes,

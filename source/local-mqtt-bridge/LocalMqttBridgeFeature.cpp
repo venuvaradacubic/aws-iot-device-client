@@ -191,9 +191,19 @@ namespace Aws
                 void LocalMqttBridgeFeature::loadFromConfig(const PlainConfig& config)
                 {
                     bridgeConfig = config.localMqttBridge;
-                    LOGM_INFO(TAG, "Loaded configuration - enabled: %s, routes: %zu",
-                              bridgeConfig.enabled ? "true" : "false",
-                              bridgeConfig.routes.size());
+                    if (bridgeConfig.routesFile.has_value() && !bridgeConfig.routesFile->empty())
+                    {
+                        LOGM_INFO(TAG, "Loaded configuration - enabled: %s, routes in config: %zu, external routes file: %s",
+                                  bridgeConfig.enabled ? "true" : "false",
+                                  bridgeConfig.routes.size(),
+                                  bridgeConfig.routesFile->c_str());
+                    }
+                    else
+                    {
+                        LOGM_INFO(TAG, "Loaded configuration - enabled: %s, routes: %zu",
+                                  bridgeConfig.enabled ? "true" : "false",
+                                  bridgeConfig.routes.size());
+                    }
                 }
 
                 bool LocalMqttBridgeFeature::validateConfig() const
@@ -843,8 +853,20 @@ namespace Aws
                     Aws::Crt::Optional<Aws::Crt::JsonView> maybeRoutesView;
                     if (in)
                     {
-                        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-                        in.close();
+                        LOGM_INFO(TAG, "%s", "Routes file opened successfully, reading content...");
+                        std::string data;
+                        try
+                        {
+                            data = std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                            in.close();
+                            LOGM_INFO(TAG, "Read %zu bytes from routes file", data.size());
+                        }
+                        catch (const std::exception& e)
+                        {
+                            LOGM_ERROR(TAG, "Exception reading file: %s", e.what());
+                            in.close();
+                            return false;
+                        }
 
                         if (data.empty())
                         {
@@ -852,48 +874,78 @@ namespace Aws
                         }
                         else
                         {
-                            LOGM_DEBUG(TAG, "Read %zu bytes from routes file", data.size());
-                        }
-
-                        try
-                        {
-                            Aws::Crt::JsonObject root(data.c_str());
-                            if (root.WasParseSuccessful())
+                            LOGM_INFO(TAG, "%s", "Parsing JSON...");
+                            try
                             {
-                                Aws::Crt::JsonView view = root.View();
-                                if (bridgeConfig.routesFileJsonPointer.has_value() && !bridgeConfig.routesFileJsonPointer->empty())
+                                Aws::Crt::JsonObject root(data.c_str());
+                                if (!root.WasParseSuccessful())
                                 {
-                                    std::string ptr = *bridgeConfig.routesFileJsonPointer;
-                                    LOGM_DEBUG(TAG, "Using JSON pointer: %s", ptr.c_str());
-                                    if (!ptr.empty() && ptr[0] == '/') ptr.erase(0,1);
-                                    std::stringstream ss(ptr);
-                                    std::string tok;
-                                    Aws::Crt::JsonView current = view;
-                                    bool ok = true;
-                                    while (std::getline(ss, tok, '/'))
-                                    {
-                                        if (tok.empty()) continue;
-                                        if (!current.IsObject() || !current.ValueExists(tok.c_str())) {
-                                            LOGM_DEBUG(TAG, "JSON pointer navigation failed at token: %s", tok.c_str());
-                                            ok = false;
-                                            break;
-                                        }
-                                        current = current.GetJsonObject(tok.c_str());
-                                    }
-                                    if (ok && current.IsListType())
-                                    {
-                                        maybeRoutesView = current;
-                                    }
+                                    LOGM_ERROR(TAG, "JSON parse failed: %s", root.GetErrorMessage().c_str());
                                 }
-                                else if (view.ValueExists("routes") && view.GetJsonObject("routes").IsListType())
+                                else
                                 {
-                                    maybeRoutesView = view.GetJsonObject("routes");
+                                    LOGM_INFO(TAG, "%s", "JSON parsed successfully");
+                                    Aws::Crt::JsonView view = root.View();
+
+                                    if (bridgeConfig.routesFileJsonPointer.has_value() && !bridgeConfig.routesFileJsonPointer->empty())
+                                    {
+                                        std::string ptr = *bridgeConfig.routesFileJsonPointer;
+                                        LOGM_INFO(TAG, "Navigating JSON pointer: %s", ptr.c_str());
+                                        if (!ptr.empty() && ptr[0] == '/') ptr.erase(0,1);
+                                        std::stringstream ss(ptr);
+                                        std::string tok;
+                                        Aws::Crt::JsonView current = view;
+                                        bool ok = true;
+                                        while (std::getline(ss, tok, '/'))
+                                        {
+                                            if (tok.empty()) continue;
+                                            LOGM_DEBUG(TAG, "Navigating to: %s", tok.c_str());
+                                            if (!current.IsObject())
+                                            {
+                                                LOGM_WARN(TAG, "Current element is not an object at: %s", tok.c_str());
+                                                ok = false;
+                                                break;
+                                            }
+                                            if (!current.ValueExists(tok.c_str()))
+                                            {
+                                                LOGM_WARN(TAG, "Key does not exist: %s", tok.c_str());
+                                                ok = false;
+                                                break;
+                                            }
+                                            current = current.GetJsonObject(tok.c_str());
+                                        }
+                                        if (ok)
+                                        {
+                                            if (current.IsListType())
+                                            {
+                                                LOGM_INFO(TAG, "%s", "Found routes array via JSON pointer");
+                                                maybeRoutesView = current;
+                                            }
+                                            else
+                                            {
+                                                LOGM_WARN(TAG, "%s", "JSON pointer target is not an array");
+                                            }
+                                        }
+                                    }
+                                    else if (view.ValueExists("routes") && view.GetJsonObject("routes").IsListType())
+                                    {
+                                        LOGM_INFO(TAG, "%s", "Found routes array at root level");
+                                        maybeRoutesView = view.GetJsonObject("routes");
+                                    }
+                                    else
+                                    {
+                                        LOGM_WARN(TAG, "%s", "No routes found at root level");
+                                    }
                                 }
                             }
-                        }
-                        catch (...)
-                        {
-                            // fall through to fallback
+                            catch (const std::exception& e)
+                            {
+                                LOGM_ERROR(TAG, "Exception parsing JSON: %s", e.what());
+                            }
+                            catch (...)
+                            {
+                                LOGM_ERROR(TAG, "%s", "Unknown exception parsing JSON");
+                            }
                         }
                     }
 
@@ -903,27 +955,54 @@ namespace Aws
                     }
 
                     std::vector<PlainConfig::LocalMqttBridge::Route> newRoutes;
-                    auto parseRoutes = [&newRoutes](const Aws::Crt::JsonView &rv){
-                        for (const auto &routeEntry : rv.AsArray())
+                    auto parseRoutes = [&newRoutes, this](const Aws::Crt::JsonView &rv){
+                        try
                         {
-                            PlainConfig::LocalMqttBridge::Route route;
-                            if (routeEntry.ValueExists("direction"))
-                                route.direction = routeEntry.GetString("direction").c_str();
-                            if (routeEntry.ValueExists("localTopic"))
-                                route.localTopic = routeEntry.GetString("localTopic").c_str();
-                            if (routeEntry.ValueExists("awsTopic"))
-                                route.awsTopic = routeEntry.GetString("awsTopic").c_str();
-                            if (routeEntry.ValueExists("localTopicTemplate"))
-                                route.localTopicTemplate = routeEntry.GetString("localTopicTemplate").c_str();
-                            if (routeEntry.ValueExists("qos"))
-                                route.qos = routeEntry.GetInteger("qos");
-                            if (routeEntry.ValueExists("throttleSeconds"))
-                                route.throttleSeconds = routeEntry.GetInteger("throttleSeconds");
-                            newRoutes.push_back(route);
+                            LOGM_INFO(TAG, "%s", "Starting to parse routes...");
+                            auto routesArray = rv.AsArray();
+                            LOGM_INFO(TAG, "Found %zu routes to parse", routesArray.size());
+
+                            size_t idx = 0;
+                            for (const auto &routeEntry : routesArray)
+                            {
+                                try
+                                {
+                                    PlainConfig::LocalMqttBridge::Route route;
+                                    if (routeEntry.ValueExists("direction"))
+                                        route.direction = routeEntry.GetString("direction").c_str();
+                                    if (routeEntry.ValueExists("localTopic"))
+                                        route.localTopic = routeEntry.GetString("localTopic").c_str();
+                                    if (routeEntry.ValueExists("awsTopic"))
+                                        route.awsTopic = routeEntry.GetString("awsTopic").c_str();
+                                    if (routeEntry.ValueExists("localTopicTemplate"))
+                                        route.localTopicTemplate = routeEntry.GetString("localTopicTemplate").c_str();
+                                    if (routeEntry.ValueExists("qos"))
+                                        route.qos = routeEntry.GetInteger("qos");
+                                    if (routeEntry.ValueExists("throttleSeconds"))
+                                        route.throttleSeconds = routeEntry.GetInteger("throttleSeconds");
+                                    newRoutes.push_back(route);
+                                    idx++;
+                                }
+                                catch (const std::exception& e)
+                                {
+                                    LOGM_ERROR(TAG, "Exception parsing route at index %zu: %s", idx, e.what());
+                                }
+                            }
+                            LOGM_INFO(TAG, "Successfully parsed %zu routes", newRoutes.size());
+                        }
+                        catch (const std::exception& e)
+                        {
+                            LOGM_ERROR(TAG, "Exception in parseRoutes: %s", e.what());
+                        }
+                        catch (...)
+                        {
+                            LOGM_ERROR(TAG, "%s", "Unknown exception in parseRoutes");
                         }
                     };
+
                     if (maybeRoutesView.has_value())
                     {
+                        LOGM_INFO(TAG, "%s", "Calling parseRoutes for loaded view...");
                         parseRoutes(maybeRoutesView.value());
                     }
 
@@ -964,15 +1043,33 @@ namespace Aws
                         }
                     }
                     // Only DEBUG here; INFO summary is emitted in applyRoutesAndResubscribe()
-                    LOGM_DEBUG(TAG, "Loaded %zu routes from %s (%s)%s", newRoutes.size(), path.c_str(), reason ? reason : "",
+                    LOGM_INFO(TAG, "Loaded %zu routes from %s (%s)%s - preparing to apply...", newRoutes.size(), path.c_str(), reason ? reason : "",
                                loadedFromFallback ? ", source=fallback" : "");
-                    applyRoutesAndResubscribe(newRoutes, true);
+
+                    try
+                    {
+                        applyRoutesAndResubscribe(newRoutes, true);
+                        LOGM_INFO(TAG, "%s", "Routes applied successfully");
+                    }
+                    catch (const std::exception& e)
+                    {
+                        LOGM_ERROR(TAG, "Exception in applyRoutesAndResubscribe: %s", e.what());
+                        return false;
+                    }
+                    catch (...)
+                    {
+                        LOGM_ERROR(TAG, "%s", "Unknown exception in applyRoutesAndResubscribe");
+                        return false;
+                    }
+
                     return true;
                 }
 
                 void LocalMqttBridgeFeature::applyRoutesAndResubscribe(const std::vector<PlainConfig::LocalMqttBridge::Route>& newRoutes,
                                                                        bool forceResubscribe)
                 {
+                    LOGM_INFO(TAG, "applyRoutesAndResubscribe called with %zu routes", newRoutes.size());
+
                     if (!routeMatcher)
                     {
                         LOGM_ERROR(TAG, "%s", "Cannot apply routes: RouteMatcher not initialized");
@@ -981,16 +1078,25 @@ namespace Aws
 
                     // Replace config routes
                     bridgeConfig.routes = newRoutes;
+                    LOGM_INFO(TAG, "%s", "Config routes updated");
+
                     // Rebuild matcher and topic list
                     std::string tn = getThingName();
+                    LOGM_INFO(TAG, "Adding routes to matcher for thing: %s", tn.c_str());
 
                     try
                     {
                         routeMatcher->addRoutes(bridgeConfig.routes, tn);
+                        LOGM_INFO(TAG, "%s", "Routes added to matcher successfully");
                     }
                     catch (const std::exception& e)
                     {
                         LOGM_ERROR(TAG, "Failed to add routes to matcher: %s", e.what());
+                        return;
+                    }
+                    catch (...)
+                    {
+                        LOGM_ERROR(TAG, "%s", "Unknown exception adding routes to matcher");
                         return;
                     }
 

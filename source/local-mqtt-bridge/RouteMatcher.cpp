@@ -22,13 +22,17 @@ namespace Aws
 
                 void RouteMatcher::addRoutes(const std::vector<Route>& routes, const std::string& thingName)
                 {
+                    LOGM_INFO(TAG, "RouteMatcher::addRoutes called with %zu routes", routes.size());
                     this->thingName = thingName;
                     upRoutes.clear();
                     upCompiled.clear();
                     downRoutes.clear();
 
+                    size_t routeIdx = 0;
                     for (const auto& route : routes)
                     {
+                        LOGM_DEBUG(TAG, "Processing route %zu: direction=%s", routeIdx, route.direction.c_str());
+
                         if (route.direction == "up")
                         {
                             upRoutes.push_back(route);
@@ -38,13 +42,23 @@ namespace Aws
                                 CompiledRoute compiled(route);
                                 try
                                 {
+                                    LOGM_DEBUG(TAG, "Compiling up route pattern: %s", route.localTopic.c_str());
                                     compiled.pattern = compileLocalTopicPattern(route.localTopic, compiled.captureNames);
                                     upCompiled.push_back(std::move(compiled));
                                     LOGM_DEBUG(TAG, "Compiled up route wildcard pattern for local topic: %s", route.localTopic.c_str());
                                 }
+                                catch(const std::regex_error& e)
+                                {
+                                    LOGM_ERROR(TAG, "Regex error compiling up route pattern %s: %s (code: %d)",
+                                              route.localTopic.c_str(), e.what(), e.code());
+                                }
                                 catch(const std::exception& e)
                                 {
                                     LOGM_WARN(TAG, "Failed to compile up route pattern %s: %s", route.localTopic.c_str(), e.what());
+                                }
+                                catch(...)
+                                {
+                                    LOGM_ERROR(TAG, "Unknown exception compiling up route pattern: %s", route.localTopic.c_str());
                                 }
                             }
                         }
@@ -53,18 +67,30 @@ namespace Aws
                             CompiledRoute compiledRoute(route);
                             try
                             {
+                                LOGM_DEBUG(TAG, "Compiling down route pattern: %s", route.awsTopic.c_str());
                                 compiledRoute.pattern = compileAwsTopicPattern(route.awsTopic, compiledRoute.captureNames);
                                 downRoutes.push_back(std::move(compiledRoute));
                                 LOGM_DEBUG(TAG, "Compiled down route pattern for AWS topic: %s", route.awsTopic.c_str());
+                            }
+                            catch (const std::regex_error& e)
+                            {
+                                LOGM_ERROR(TAG, "Regex error compiling down route pattern %s: %s (code: %d)",
+                                          route.awsTopic.c_str(), e.what(), e.code());
                             }
                             catch (const std::exception& e)
                             {
                                 LOGM_ERROR(TAG, "Failed to compile route pattern for %s: %s", route.awsTopic.c_str(), e.what());
                             }
+                            catch (...)
+                            {
+                                LOGM_ERROR(TAG, "Unknown exception compiling down route pattern: %s", route.awsTopic.c_str());
+                            }
                         }
+
+                        routeIdx++;
                     }
 
-                    LOGM_DEBUG(TAG, "Loaded %zu up routes and %zu down routes", upRoutes.size(), downRoutes.size());
+                    LOGM_INFO(TAG, "RouteMatcher loaded %zu up routes and %zu down routes", upRoutes.size(), downRoutes.size());
                 }
 
                 const Route* RouteMatcher::matchUp(const std::string& localTopic) const

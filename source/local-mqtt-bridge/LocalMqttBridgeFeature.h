@@ -88,11 +88,16 @@ namespace Aws
                     std::atomic<bool> running{false};
                     std::unique_ptr<std::thread> localToAwsThread;
                     std::unique_ptr<std::thread> awsToLocalThread;
+                    std::unique_ptr<std::thread> fileMonitorThread;
 
                     // Metrics tracking
                     std::atomic<size_t> messagesForwarded{0};
                     std::atomic<size_t> messagesDropped{0};
                     std::chrono::steady_clock::time_point startTime;
+
+                    // File monitoring for dynamic route reload
+                    std::time_t lastRouteFileModTime{0};
+                    std::mutex fileMonitorMutex;
 
                     // Debounce for sync control messages
                     std::chrono::steady_clock::time_point lastSyncRequestTime{std::chrono::steady_clock::time_point::min()};
@@ -138,6 +143,11 @@ namespace Aws
                      * @brief Thread function for forwarding messages from AWS to local
                      */
                     void awsToLocalThreadFunction();
+
+                    /**
+                     * @brief Thread function for monitoring routes file changes
+                     */
+                    void fileMonitorThreadFunction();
 
                     /**
                      * @brief Handle message received from local broker

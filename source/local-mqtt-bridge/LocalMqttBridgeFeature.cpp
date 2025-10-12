@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <sys/stat.h>
 #include <cerrno>
+#include <cstdio>
 
 using namespace std;
 using namespace Aws::Iot::DeviceClient::LocalMqttBridge;
@@ -113,7 +114,7 @@ namespace Aws
                         return Feature::SUCCESS;
                     }
 
-                    LOGM_INFO(TAG, "Starting Local MQTT Bridge (routes from config: %zu, external file will be loaded after delay)",
+                    LOGM_INFO(TAG, "Starting Local MQTT Bridge (routes from config: %zu, external file will be loaded immediately)",
                               bridgeConfig.routes.size());
 
                     // Mark as running and set start time
@@ -124,29 +125,23 @@ namespace Aws
                     localToAwsThread.reset(new std::thread(&LocalMqttBridgeFeature::localToAwsThreadFunction, this));
                     awsToLocalThread.reset(new std::thread(&LocalMqttBridgeFeature::awsToLocalThreadFunction, this));
 
-                    // Delay connection setup to allow Sample Shadow to write the output JSON
-                    std::thread([this]{
-                        LOGM_INFO(TAG, "%s", "Waiting 30 seconds for Sample Shadow to prepare routes file...");
-                        std::this_thread::sleep_for(std::chrono::seconds(30));
-                        if (!running.load())
-                        {
-                            LOGM_WARN(TAG, "%s", "Bridge stopped before connections could be established");
-                            return;
-                        }
-                        LOGM_INFO(TAG, "%s", "Delay complete, setting up connections and loading routes...");
-                        if (!setupConnections())
-                        {
-                            LOGM_ERROR(TAG, "%s", "Failed to setup connections after delay");
-                            // Stop the feature if setup fails
-                            running.store(false);
-                        }
-                        else
-                        {
-                            LOGM_INFO(TAG, "%s", "Connections established and routes loaded successfully");
-                        }
-                    }).detach();
+                    // Start file monitoring thread if routes file is configured
+                    if (bridgeConfig.routesFile.has_value() && !bridgeConfig.routesFile->empty())
+                    {
+                        fileMonitorThread.reset(new std::thread(&LocalMqttBridgeFeature::fileMonitorThreadFunction, this));
+                        LOGM_INFO(TAG, "%s", "File monitoring thread started");
+                    }
 
-                    LOGM_INFO(TAG, "%s", "Local MQTT Bridge start initiated (connections pending)");
+                    // Setup connections immediately (no delay needed for static routes file)
+                    LOGM_INFO(TAG, "%s", "Setting up connections and loading routes from static file...");
+                    if (!setupConnections())
+                    {
+                        LOGM_ERROR(TAG, "%s", "Failed to setup connections");
+                        running.store(false);
+                        return -1;
+                    }
+
+                    LOGM_INFO(TAG, "%s", "Local MQTT Bridge started successfully");
                     return Feature::SUCCESS;
                 }
 
@@ -177,6 +172,12 @@ namespace Aws
                     {
                         awsToLocalThread->join();
                         awsToLocalThread.reset();
+                    }
+
+                    if (fileMonitorThread && fileMonitorThread->joinable())
+                    {
+                        fileMonitorThread->join();
+                        fileMonitorThread.reset();
                     }
 
                     // Print final statistics
@@ -732,6 +733,84 @@ namespace Aws
                     LOGM_INFO(TAG, "%s", "AWS-to-local message forwarding thread stopped");
                 }
 
+                void LocalMqttBridgeFeature::fileMonitorThreadFunction()
+                {
+                    LOGM_INFO(TAG, "%s", "File monitoring thread started");
+
+                    if (!bridgeConfig.routesFile.has_value() || bridgeConfig.routesFile->empty())
+                    {
+                        LOGM_WARN(TAG, "%s", "No routes file configured for monitoring");
+                        return;
+                    }
+
+                    const std::string path = *bridgeConfig.routesFile;
+                    const int checkIntervalSeconds = 60;
+
+                    // Initialize last modification time
+                    {
+                        std::lock_guard<std::mutex> lock(fileMonitorMutex);
+                        struct stat fileStat;
+                        if (stat(path.c_str(), &fileStat) == 0)
+                        {
+                            lastRouteFileModTime = fileStat.st_mtime;
+                            LOGM_INFO(TAG, "Initial routes file mtime: %ld", (long)lastRouteFileModTime);
+                        }
+                        else
+                        {
+                            LOGM_WARN(TAG, "Could not stat routes file for monitoring: %s", path.c_str());
+                        }
+                    }
+
+                    while (running.load())
+                    {
+                        // Sleep for check interval
+                        for (int i = 0; i < checkIntervalSeconds && running.load(); ++i)
+                        {
+                            std::this_thread::sleep_for(std::chrono::seconds(1));
+                        }
+
+                        if (!running.load())
+                        {
+                            break;
+                        }
+
+                        // Check if file has been modified
+                        struct stat fileStat;
+                        if (stat(path.c_str(), &fileStat) != 0)
+                        {
+                            LOGM_WARN(TAG, "Could not stat routes file: %s (errno: %d)", path.c_str(), errno);
+                            continue;
+                        }
+
+                        bool fileChanged = false;
+                        {
+                            std::lock_guard<std::mutex> lock(fileMonitorMutex);
+                            if (fileStat.st_mtime != lastRouteFileModTime)
+                            {
+                                LOGM_INFO(TAG, "Routes file changed (mtime: %ld -> %ld), reloading...",
+                                         (long)lastRouteFileModTime, (long)fileStat.st_mtime);
+                                lastRouteFileModTime = fileStat.st_mtime;
+                                fileChanged = true;
+                            }
+                        }
+
+                        if (fileChanged)
+                        {
+                            // Reload routes from file
+                            if (reloadRoutesFromExternalIfConfigured("file-changed"))
+                            {
+                                LOGM_INFO(TAG, "%s", "Successfully reloaded routes after file change");
+                            }
+                            else
+                            {
+                                LOGM_ERROR(TAG, "%s", "Failed to reload routes after file change");
+                            }
+                        }
+                    }
+
+                    LOGM_INFO(TAG, "%s", "File monitoring thread stopped");
+                }
+
                 void LocalMqttBridgeFeature::handleLocalMessage(const std::string& topic,
                                                                const void* payload, int payloadLen)
                 {
@@ -833,268 +912,121 @@ namespace Aws
                         LOGM_DEBUG(TAG, "%s", "No external routes file configured");
                         return false;
                     }
+
                     const std::string path = *bridgeConfig.routesFile;
-                    LOGM_INFO(TAG, "Attempting to load routes from: %s (reason: %s)",
-                              path.c_str(), reason ? reason : "unknown");
+                    LOGM_INFO(TAG, "Loading routes from: %s (reason: %s)", path.c_str(), reason ? reason : "unknown");
 
                     try
                     {
-                        // Check if file exists and is readable
-                        struct stat fileStat;
-                        if (stat(path.c_str(), &fileStat) != 0)
-                        {
-                            LOGM_ERROR(TAG, "File does not exist or cannot stat: %s (errno: %d)", path.c_str(), errno);
-                            return false;
-                        }
-                        LOGM_INFO(TAG, "File exists, size: %ld bytes, mode: 0%o", (long)fileStat.st_size, fileStat.st_mode & 0777);
-
-                        // Check if it's a regular file
-                        if (!S_ISREG(fileStat.st_mode))
-                        {
-                            LOGM_ERROR(TAG, "Path is not a regular file: %s", path.c_str());
-                            return false;
-                        }
-
-                        LOGM_INFO(TAG, "%s", "About to open file stream...");
+                        // Read file
                         std::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
-                        LOGM_INFO(TAG, "%s", "File stream constructed, checking if opened successfully...");
-
                         if (!in)
-                    {
-                        LOGM_WARN(TAG, "Routes file does not exist or is not readable: %s", path.c_str());
-                        // Try fallback to input file
-                        if (!sampleShadowInputFile.empty())
                         {
-                            LOGM_INFO(TAG, "Attempting fallback to input file: %s", sampleShadowInputFile.c_str());
-                        }
-                        else
-                        {
+                            LOGM_ERROR(TAG, "Cannot open routes file: %s (errno: %d)", path.c_str(), errno);
                             return false;
                         }
-                    }
 
-                    Aws::Crt::Optional<Aws::Crt::JsonView> maybeRoutesView;
-                    if (in)
-                    {
-                        LOGM_INFO(TAG, "%s", "Routes file opened successfully, reading content...");
-                        std::string data;
-                        try
-                        {
-                            data = std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-                            in.close();
-                            LOGM_INFO(TAG, "Read %zu bytes from routes file", data.size());
-                        }
-                        catch (const std::exception& e)
-                        {
-                            LOGM_ERROR(TAG, "Exception reading file: %s", e.what());
-                            in.close();
-                            return false;
-                        }
+                        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                        in.close();
 
                         if (data.empty())
                         {
                             LOGM_WARN(TAG, "Routes file is empty: %s", path.c_str());
+                            return false;
+                        }
+
+                        LOGM_DEBUG(TAG, "Read %zu bytes from routes file", data.size());
+
+                        // Parse JSON
+                        Aws::Crt::JsonObject root(data.c_str());
+                        if (!root.WasParseSuccessful())
+                        {
+                            LOGM_ERROR(TAG, "JSON parse failed: %s", root.GetErrorMessage().c_str());
+                            return false;
+                        }
+
+                        Aws::Crt::JsonView view = root.View();
+
+                        // Extract routes array using simple pointer (e.g., "/routes")
+                        Aws::Crt::JsonView routesView;
+                        if (bridgeConfig.routesFileJsonPointer.has_value() && !bridgeConfig.routesFileJsonPointer->empty())
+                        {
+                            std::string ptr = *bridgeConfig.routesFileJsonPointer;
+                            // Remove leading slash if present (e.g., "/routes" -> "routes")
+                            if (!ptr.empty() && ptr[0] == '/')
+                            {
+                                ptr = ptr.substr(1);
+                            }
+
+                            if (!view.ValueExists(ptr.c_str()))
+                            {
+                                LOGM_ERROR(TAG, "JSON pointer key not found: %s", ptr.c_str());
+                                return false;
+                            }
+
+                            routesView = view.GetJsonObject(ptr.c_str());
                         }
                         else
                         {
-                            LOGM_INFO(TAG, "%s", "Parsing JSON...");
+                            // No pointer specified, assume root level "routes" key
+                            if (!view.ValueExists("routes"))
+                            {
+                                LOGM_ERROR(TAG, "%s", "No 'routes' key found at root level");
+                                return false;
+                            }
+                            routesView = view.GetJsonObject("routes");
+                        }
+
+                        if (!routesView.IsListType())
+                        {
+                            LOGM_ERROR(TAG, "%s", "Routes element is not an array");
+                            return false;
+                        }
+
+                        // Parse routes array
+                        std::vector<PlainConfig::LocalMqttBridge::Route> newRoutes;
+                        auto routesArray = routesView.AsArray();
+                        LOGM_INFO(TAG, "Parsing %zu routes from file...", routesArray.size());
+
+                        for (const auto &routeEntry : routesArray)
+                        {
                             try
                             {
-                                Aws::Crt::JsonObject root(data.c_str());
-                                if (!root.WasParseSuccessful())
-                                {
-                                    LOGM_ERROR(TAG, "JSON parse failed: %s", root.GetErrorMessage().c_str());
-                                }
-                                else
-                                {
-                                    LOGM_INFO(TAG, "%s", "JSON parsed successfully");
-                                    Aws::Crt::JsonView view = root.View();
-
-                                    if (bridgeConfig.routesFileJsonPointer.has_value() && !bridgeConfig.routesFileJsonPointer->empty())
-                                    {
-                                        std::string ptr = *bridgeConfig.routesFileJsonPointer;
-                                        LOGM_INFO(TAG, "Navigating JSON pointer: %s", ptr.c_str());
-                                        if (!ptr.empty() && ptr[0] == '/') ptr.erase(0,1);
-                                        std::stringstream ss(ptr);
-                                        std::string tok;
-                                        Aws::Crt::JsonView current = view;
-                                        bool ok = true;
-                                        while (std::getline(ss, tok, '/'))
-                                        {
-                                            if (tok.empty()) continue;
-                                            LOGM_DEBUG(TAG, "Navigating to: %s", tok.c_str());
-                                            if (!current.IsObject())
-                                            {
-                                                LOGM_WARN(TAG, "Current element is not an object at: %s", tok.c_str());
-                                                ok = false;
-                                                break;
-                                            }
-                                            if (!current.ValueExists(tok.c_str()))
-                                            {
-                                                LOGM_WARN(TAG, "Key does not exist: %s", tok.c_str());
-                                                ok = false;
-                                                break;
-                                            }
-                                            current = current.GetJsonObject(tok.c_str());
-                                        }
-                                        if (ok)
-                                        {
-                                            if (current.IsListType())
-                                            {
-                                                LOGM_INFO(TAG, "%s", "Found routes array via JSON pointer");
-                                                maybeRoutesView = current;
-                                            }
-                                            else
-                                            {
-                                                LOGM_WARN(TAG, "%s", "JSON pointer target is not an array");
-                                            }
-                                        }
-                                    }
-                                    else if (view.ValueExists("routes") && view.GetJsonObject("routes").IsListType())
-                                    {
-                                        LOGM_INFO(TAG, "%s", "Found routes array at root level");
-                                        maybeRoutesView = view.GetJsonObject("routes");
-                                    }
-                                    else
-                                    {
-                                        LOGM_WARN(TAG, "%s", "No routes found at root level");
-                                    }
-                                }
+                                PlainConfig::LocalMqttBridge::Route route;
+                                if (routeEntry.ValueExists("direction"))
+                                    route.direction = routeEntry.GetString("direction").c_str();
+                                if (routeEntry.ValueExists("localTopic"))
+                                    route.localTopic = routeEntry.GetString("localTopic").c_str();
+                                if (routeEntry.ValueExists("awsTopic"))
+                                    route.awsTopic = routeEntry.GetString("awsTopic").c_str();
+                                if (routeEntry.ValueExists("localTopicTemplate"))
+                                    route.localTopicTemplate = routeEntry.GetString("localTopicTemplate").c_str();
+                                if (routeEntry.ValueExists("qos"))
+                                    route.qos = routeEntry.GetInteger("qos");
+                                if (routeEntry.ValueExists("throttleSeconds"))
+                                    route.throttleSeconds = routeEntry.GetInteger("throttleSeconds");
+                                newRoutes.push_back(route);
                             }
                             catch (const std::exception& e)
                             {
-                                LOGM_ERROR(TAG, "Exception parsing JSON: %s", e.what());
-                            }
-                            catch (...)
-                            {
-                                LOGM_ERROR(TAG, "%s", "Unknown exception parsing JSON");
+                                LOGM_WARN(TAG, "Skipping invalid route entry: %s", e.what());
                             }
                         }
-                    }
 
-                    if (!maybeRoutesView.has_value())
-                    {
-                        LOGM_WARN(TAG, "Failed to load routes from output file: %s, attempting input fallback if available", path.c_str());
-                    }
+                        LOGM_INFO(TAG, "Successfully parsed %zu routes from %s", newRoutes.size(), path.c_str());
 
-                    std::vector<PlainConfig::LocalMqttBridge::Route> newRoutes;
-                    auto parseRoutes = [&newRoutes, this](const Aws::Crt::JsonView &rv){
-                        try
-                        {
-                            LOGM_INFO(TAG, "%s", "Starting to parse routes...");
-                            auto routesArray = rv.AsArray();
-                            LOGM_INFO(TAG, "Found %zu routes to parse", routesArray.size());
-
-                            size_t idx = 0;
-                            for (const auto &routeEntry : routesArray)
-                            {
-                                try
-                                {
-                                    PlainConfig::LocalMqttBridge::Route route;
-                                    if (routeEntry.ValueExists("direction"))
-                                        route.direction = routeEntry.GetString("direction").c_str();
-                                    if (routeEntry.ValueExists("localTopic"))
-                                        route.localTopic = routeEntry.GetString("localTopic").c_str();
-                                    if (routeEntry.ValueExists("awsTopic"))
-                                        route.awsTopic = routeEntry.GetString("awsTopic").c_str();
-                                    if (routeEntry.ValueExists("localTopicTemplate"))
-                                        route.localTopicTemplate = routeEntry.GetString("localTopicTemplate").c_str();
-                                    if (routeEntry.ValueExists("qos"))
-                                        route.qos = routeEntry.GetInteger("qos");
-                                    if (routeEntry.ValueExists("throttleSeconds"))
-                                        route.throttleSeconds = routeEntry.GetInteger("throttleSeconds");
-                                    newRoutes.push_back(route);
-                                    idx++;
-                                }
-                                catch (const std::exception& e)
-                                {
-                                    LOGM_ERROR(TAG, "Exception parsing route at index %zu: %s", idx, e.what());
-                                }
-                            }
-                            LOGM_INFO(TAG, "Successfully parsed %zu routes", newRoutes.size());
-                        }
-                        catch (const std::exception& e)
-                        {
-                            LOGM_ERROR(TAG, "Exception in parseRoutes: %s", e.what());
-                        }
-                        catch (...)
-                        {
-                            LOGM_ERROR(TAG, "%s", "Unknown exception in parseRoutes");
-                        }
-                    };
-
-                    if (maybeRoutesView.has_value())
-                    {
-                        LOGM_INFO(TAG, "%s", "Calling parseRoutes for loaded view...");
-                        parseRoutes(maybeRoutesView.value());
-                    }
-
-                    // Fallback rule: if output has zero routes and we have an input fallback, read from input
-                    bool loadedFromFallback = false;
-                    if (newRoutes.empty() && !sampleShadowInputFile.empty())
-                    {
-                        std::ifstream in2(sampleShadowInputFile.c_str(), std::ios::in | std::ios::binary);
-                        if (in2)
-                        {
-                            std::string data2((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
-                            try
-                            {
-                                Aws::Crt::JsonObject root2(data2.c_str());
-                                if (root2.WasParseSuccessful())
-                                {
-                                    auto v2 = root2.View();
-                                    if (v2.IsObject() && v2.ValueExists("localMqttBridge") && v2.GetJsonObject("localMqttBridge").IsObject())
-                                    {
-                                        auto lmb = v2.GetJsonObject("localMqttBridge");
-                                        if (lmb.ValueExists("routes") && lmb.GetJsonObject("routes").IsListType())
-                                        {
-                                            parseRoutes(lmb.GetJsonObject("routes"));
-                                            loadedFromFallback = true;
-                                            LOGM_DEBUG(TAG, "Loaded %zu routes from fallback input %s", newRoutes.size(), sampleShadowInputFile.c_str());
-                                        }
-                                    }
-                                }
-                            }
-                            catch (...)
-                            {
-                                LOGM_WARN(TAG, "Invalid JSON in fallback input routes file: %s", sampleShadowInputFile.c_str());
-                            }
-                        }
-                        else
-                        {
-                            LOGM_WARN(TAG, "Routes fallback input file not readable: %s", sampleShadowInputFile.c_str());
-                        }
-                    }
-                    // Only DEBUG here; INFO summary is emitted in applyRoutesAndResubscribe()
-                    LOGM_INFO(TAG, "Loaded %zu routes from %s (%s)%s - preparing to apply...", newRoutes.size(), path.c_str(), reason ? reason : "",
-                               loadedFromFallback ? ", source=fallback" : "");
-
-                    try
-                    {
+                        // Apply the routes
                         applyRoutesAndResubscribe(newRoutes, true);
-                        LOGM_INFO(TAG, "%s", "Routes applied successfully");
+                        return true;
                     }
                     catch (const std::exception& e)
                     {
-                        LOGM_ERROR(TAG, "Exception in applyRoutesAndResubscribe: %s", e.what());
+                        LOGM_ERROR(TAG, "Exception loading routes: %s", e.what());
                         return false;
                     }
                     catch (...)
                     {
-                        LOGM_ERROR(TAG, "%s", "Unknown exception in applyRoutesAndResubscribe");
-                        return false;
-                    }
-
-                    return true;
-                    }
-                    catch (const std::exception& e)
-                    {
-                        LOGM_ERROR(TAG, "FATAL: Exception in reloadRoutesFromExternalIfConfigured: %s", e.what());
-                        return false;
-                    }
-                    catch (...)
-                    {
-                        LOGM_ERROR(TAG, "%s", "FATAL: Unknown exception in reloadRoutesFromExternalIfConfigured");
+                        LOGM_ERROR(TAG, "%s", "Unknown exception loading routes");
                         return false;
                     }
                 }

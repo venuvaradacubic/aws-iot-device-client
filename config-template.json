@@ -14,7 +14,11 @@
 		"handler-directory": "<replace_with_job_handler_directory_path>"
 	},
 	"tunneling": {
-		"enabled": true
+		"enabled": true,
+		"ssh-port": 22,
+		"http-port": 80,
+		"https-port": 443,
+		"vnc-port": 5900
 	},
 	"device-defender": {
 		"enabled": true,

@@ -184,14 +184,26 @@ namespace Aws
                     static constexpr char CLI_TUNNELING_DISABLE_NOTIFICATION[] = "--tunneling-disable-notification";
                     static constexpr char CLI_TUNNELING_REGION[] = "--tunneling-region";
                     static constexpr char CLI_TUNNELING_SERVICE[] = "--tunneling-service";
+                    static constexpr char CLI_TUNNELING_SSH_PORT[] = "--tunneling-ssh-port";
+                    static constexpr char CLI_TUNNELING_HTTP_PORT[] = "--tunneling-http-port";
+                    static constexpr char CLI_TUNNELING_HTTPS_PORT[] = "--tunneling-https-port";
+                    static constexpr char CLI_TUNNELING_VNC_PORT[] = "--tunneling-vnc-port";
                     static constexpr char JSON_KEY_ENABLED[] = "enabled";
                     static constexpr char JSON_KEY_ENDPOINT[] = "endpoint";
+                    static constexpr char JSON_KEY_SSH_PORT[] = "ssh-port";
+                    static constexpr char JSON_KEY_HTTP_PORT[] = "http-port";
+                    static constexpr char JSON_KEY_HTTPS_PORT[] = "https-port";
+                    static constexpr char JSON_KEY_VNC_PORT[] = "vnc-port";
 
                     bool enabled{true};
                     bool subscribeNotification{true};
                     Aws::Crt::Optional<std::string> destinationAccessToken;
                     Aws::Crt::Optional<std::string> region;
                     Aws::Crt::Optional<int> port;
+                    Aws::Crt::Optional<int> sshPort;
+                    Aws::Crt::Optional<int> httpPort;
+                    Aws::Crt::Optional<int> httpsPort;
+                    Aws::Crt::Optional<int> vncPort;
 
                     // Normally the endpoint is determined by `region` only. This is only used to override the normal
                     // endpoint such as when testing against the gamma stage.

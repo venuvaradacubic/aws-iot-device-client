@@ -205,6 +205,26 @@ namespace Aws
                     Aws::Crt::Optional<std::string> mEndpoint;
 
                     /**
+                     * \brief Custom SSH port override. When set, this port is used for SSH tunneling instead of the default port 22.
+                     */
+                    Aws::Crt::Optional<int> mSshPort;
+
+                    /**
+                     * \brief Custom HTTP port override. When set, this port is used for HTTP tunneling instead of the default port 80.
+                     */
+                    Aws::Crt::Optional<int> mHttpPort;
+
+                    /**
+                     * \brief Custom HTTPS port override. When set, this port is used for HTTPS tunneling instead of the default port 443.
+                     */
+                    Aws::Crt::Optional<int> mHttpsPort;
+
+                    /**
+                     * \brief Custom VNC port override. When set, this port is used for VNC tunneling instead of the default port 5900.
+                     */
+                    Aws::Crt::Optional<int> mVncPort;
+
+                    /**
                      * \brief A vector of SecureTunnelingContext. Each context represents an active secure tunneling
                      * session.
                      */

@@ -79,8 +79,11 @@ namespace Aws
                 {
                     if (mServiceToPortMap.empty())
                     {
-                        mServiceToPortMap["SSH"] = 22;
-                        mServiceToPortMap["VNC"] = 5900;
+                        // Use custom ports if configured, otherwise use default ports
+                        mServiceToPortMap["SSH"] = mSshPort.has_value() ? mSshPort.value() : 22;
+                        mServiceToPortMap["VNC"] = mVncPort.has_value() ? mVncPort.value() : 5900;
+                        mServiceToPortMap["HTTP"] = mHttpPort.has_value() ? mHttpPort.value() : 80;
+                        mServiceToPortMap["HTTPS"] = mHttpsPort.has_value() ? mHttpsPort.value() : 443;
                     }
 
                     auto result = mServiceToPortMap.find(service);
@@ -136,6 +139,10 @@ namespace Aws
                     mRootCa = config.rootCa;
                     mSubscribeNotification = config.tunneling.subscribeNotification;
                     mEndpoint = config.tunneling.endpoint;
+                    mSshPort = config.tunneling.sshPort;
+                    mHttpPort = config.tunneling.httpPort;
+                    mHttpsPort = config.tunneling.httpsPort;
+                    mVncPort = config.tunneling.vncPort;
 
                     if (!config.tunneling.subscribeNotification)
                     {

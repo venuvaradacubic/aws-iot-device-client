@@ -865,8 +865,16 @@ constexpr char PlainConfig::Tunneling::CLI_ENABLE_TUNNELING[];
 constexpr char PlainConfig::Tunneling::CLI_TUNNELING_DISABLE_NOTIFICATION[];
 constexpr char PlainConfig::Tunneling::CLI_TUNNELING_REGION[];
 constexpr char PlainConfig::Tunneling::CLI_TUNNELING_SERVICE[];
+constexpr char PlainConfig::Tunneling::CLI_TUNNELING_SSH_PORT[];
+constexpr char PlainConfig::Tunneling::CLI_TUNNELING_HTTP_PORT[];
+constexpr char PlainConfig::Tunneling::CLI_TUNNELING_HTTPS_PORT[];
+constexpr char PlainConfig::Tunneling::CLI_TUNNELING_VNC_PORT[];
 constexpr char PlainConfig::Tunneling::JSON_KEY_ENABLED[];
 constexpr char PlainConfig::Tunneling::JSON_KEY_ENDPOINT[];
+constexpr char PlainConfig::Tunneling::JSON_KEY_SSH_PORT[];
+constexpr char PlainConfig::Tunneling::JSON_KEY_HTTP_PORT[];
+constexpr char PlainConfig::Tunneling::JSON_KEY_HTTPS_PORT[];
+constexpr char PlainConfig::Tunneling::JSON_KEY_VNC_PORT[];
 
 bool PlainConfig::Tunneling::LoadFromJson(const Crt::JsonView &json)
 {
@@ -880,6 +888,30 @@ bool PlainConfig::Tunneling::LoadFromJson(const Crt::JsonView &json)
     if (json.ValueExists(jsonKey))
     {
         endpoint = json.GetString(jsonKey).c_str();
+    }
+
+    jsonKey = JSON_KEY_SSH_PORT;
+    if (json.ValueExists(jsonKey))
+    {
+        sshPort = json.GetInteger(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_HTTP_PORT;
+    if (json.ValueExists(jsonKey))
+    {
+        httpPort = json.GetInteger(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_HTTPS_PORT;
+    if (json.ValueExists(jsonKey))
+    {
+        httpsPort = json.GetInteger(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_VNC_PORT;
+    if (json.ValueExists(jsonKey))
+    {
+        vncPort = json.GetInteger(jsonKey);
     }
 
     return true;
@@ -907,6 +939,71 @@ bool PlainConfig::Tunneling::LoadFromCliArgs(const CliArgs &cliArgs)
 #else
         port = 0;
 #endif
+    }
+    if (cliArgs.count(PlainConfig::Tunneling::CLI_TUNNELING_SSH_PORT))
+    {
+        try
+        {
+            sshPort = stoi(cliArgs.at(PlainConfig::Tunneling::CLI_TUNNELING_SSH_PORT).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer, please use a "
+                "valid port number between 1 and 65535 ***",
+                DeviceClient::DC_FATAL_ERROR,
+                PlainConfig::Tunneling::CLI_TUNNELING_SSH_PORT);
+            return false;
+        }
+    }
+    if (cliArgs.count(PlainConfig::Tunneling::CLI_TUNNELING_HTTP_PORT))
+    {
+        try
+        {
+            httpPort = stoi(cliArgs.at(PlainConfig::Tunneling::CLI_TUNNELING_HTTP_PORT).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                PlainConfig::Tunneling::CLI_TUNNELING_HTTP_PORT);
+            return false;
+        }
+    }
+    if (cliArgs.count(PlainConfig::Tunneling::CLI_TUNNELING_HTTPS_PORT))
+    {
+        try
+        {
+            httpsPort = stoi(cliArgs.at(PlainConfig::Tunneling::CLI_TUNNELING_HTTPS_PORT).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                PlainConfig::Tunneling::CLI_TUNNELING_HTTPS_PORT);
+            return false;
+        }
+    }
+    if (cliArgs.count(PlainConfig::Tunneling::CLI_TUNNELING_VNC_PORT))
+    {
+        try
+        {
+            vncPort = stoi(cliArgs.at(PlainConfig::Tunneling::CLI_TUNNELING_VNC_PORT).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                PlainConfig::Tunneling::CLI_TUNNELING_VNC_PORT);
+            return false;
+        }
     }
 
     return true;

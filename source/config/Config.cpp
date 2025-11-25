@@ -935,7 +935,7 @@ bool PlainConfig::Tunneling::LoadFromCliArgs(const CliArgs &cliArgs)
     {
 #if !defined(EXCLUDE_ST)
         auto service = cliArgs.at(PlainConfig::Tunneling::CLI_TUNNELING_SERVICE);
-        port = SecureTunnelingFeature::GetPortFromService(service);
+        port = SecureTunnelingFeature::GetDefaultPortFromService(service);
 #else
         port = 0;
 #endif

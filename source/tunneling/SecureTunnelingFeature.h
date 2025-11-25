@@ -64,7 +64,15 @@ namespace Aws
                      * @param service the name of the service
                      * @return the port number
                      */
-                    static uint16_t GetPortFromService(const std::string &service);
+                    uint16_t GetPortFromService(const std::string &service);
+
+                    /**
+                     * \brief Static method to get default port for a service (for validation purposes)
+                     *
+                     * @param service the name of the service
+                     * @return the default port number, or 0 if service is unsupported
+                     */
+                    static uint16_t GetDefaultPortFromService(const std::string &service);
 
                     /**
                      * \brief Check if the given port is within the valid range

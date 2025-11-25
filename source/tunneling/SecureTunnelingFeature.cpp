@@ -96,6 +96,24 @@ namespace Aws
                     return result->second;
                 }
 
+                uint16_t SecureTunnelingFeature::GetDefaultPortFromService(const std::string &service)
+                {
+                    static std::map<std::string, uint16_t> defaultPorts = {
+                        {"SSH", 22},
+                        {"VNC", 5900},
+                        {"HTTP", 80},
+                        {"HTTPS", 443}
+                    };
+
+                    auto result = defaultPorts.find(service);
+                    if (result == defaultPorts.end())
+                    {
+                        return 0; // Unsupported service
+                    }
+
+                    return result->second;
+                }
+
                 bool SecureTunnelingFeature::IsValidPort(int port)
                 {
                     return 1 <= port && port <= 65535;

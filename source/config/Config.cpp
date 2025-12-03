@@ -49,11 +49,15 @@ constexpr char PlainConfig::CLI_CERT[];
 constexpr char PlainConfig::CLI_KEY[];
 constexpr char PlainConfig::CLI_ROOT_CA[];
 constexpr char PlainConfig::CLI_THING_NAME[];
+constexpr char PlainConfig::CLI_MQTT_PORT[];
+constexpr char PlainConfig::CLI_MQTT_ALPN[];
 constexpr char PlainConfig::JSON_KEY_ENDPOINT[];
 constexpr char PlainConfig::JSON_KEY_CERT[];
 constexpr char PlainConfig::JSON_KEY_KEY[];
 constexpr char PlainConfig::JSON_KEY_ROOT_CA[];
 constexpr char PlainConfig::JSON_KEY_THING_NAME[];
+constexpr char PlainConfig::JSON_KEY_MQTT_PORT[];
+constexpr char PlainConfig::JSON_KEY_MQTT_ALPN[];
 constexpr char PlainConfig::JSON_KEY_LOGGING[];
 constexpr char PlainConfig::JSON_KEY_JOBS[];
 constexpr char PlainConfig::JSON_KEY_TUNNELING[];
@@ -146,6 +150,18 @@ bool PlainConfig::LoadFromJson(const Crt::JsonView &json)
     if (json.ValueExists(jsonKey))
     {
         thingName = json.GetString(jsonKey).c_str();
+    }
+
+    jsonKey = JSON_KEY_MQTT_PORT;
+    if (json.ValueExists(jsonKey))
+    {
+        mqttPort = static_cast<uint16_t>(json.GetInteger(jsonKey));
+    }
+
+    jsonKey = JSON_KEY_MQTT_ALPN;
+    if (json.ValueExists(jsonKey))
+    {
+        mqttAlpn = json.GetString(jsonKey).c_str();
     }
 
     jsonKey = JSON_KEY_JOBS;
@@ -266,6 +282,14 @@ bool PlainConfig::LoadFromCliArgs(const CliArgs &cliArgs)
     if (cliArgs.count(PlainConfig::CLI_KEY))
     {
         key = FileUtils::ExtractExpandedPath(cliArgs.at(PlainConfig::CLI_KEY).c_str());
+    }
+    if (cliArgs.count(PlainConfig::CLI_MQTT_PORT))
+    {
+        mqttPort = static_cast<uint16_t>(std::stoi(cliArgs.at(PlainConfig::CLI_MQTT_PORT)));
+    }
+    if (cliArgs.count(PlainConfig::CLI_MQTT_ALPN))
+    {
+        mqttAlpn = cliArgs.at(PlainConfig::CLI_MQTT_ALPN).c_str();
     }
     if (cliArgs.count(PlainConfig::CLI_ROOT_CA))
     {
@@ -448,6 +472,14 @@ void PlainConfig::SerializeToObject(Crt::JsonObject &object) const
     if (thingName.has_value() && thingName->c_str())
     {
         object.WithString(JSON_KEY_THING_NAME, thingName->c_str());
+    }
+    if (mqttPort.has_value())
+    {
+        object.WithInteger(JSON_KEY_MQTT_PORT, mqttPort.value());
+    }
+    if (mqttAlpn.has_value() && mqttAlpn->c_str())
+    {
+        object.WithString(JSON_KEY_MQTT_ALPN, mqttAlpn->c_str());
     }
 
     Crt::JsonObject loggingObject;

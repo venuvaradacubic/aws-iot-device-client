@@ -4,6 +4,8 @@
 	"key": "<replace_with_private_key_file_path>",
 	"root-ca": "<replace_with_root_ca_file_path>",
 	"thing-name": "<replace_with_thing_name/replace_with_client_id>",
+	"mqtt-port": 8883,
+	"mqtt-alpn": "x-amzn-mqtt-ca",
 	"logging": {
 		"level": "DEBUG",
 		"type": "FILE",

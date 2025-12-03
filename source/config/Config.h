@@ -78,12 +78,16 @@ namespace Aws
                 static constexpr char CLI_KEY[] = "--key";
                 static constexpr char CLI_ROOT_CA[] = "--root-ca";
                 static constexpr char CLI_THING_NAME[] = "--thing-name";
+                static constexpr char CLI_MQTT_PORT[] = "--mqtt-port";
+                static constexpr char CLI_MQTT_ALPN[] = "--mqtt-alpn";
 
                 static constexpr char JSON_KEY_ENDPOINT[] = "endpoint";
                 static constexpr char JSON_KEY_CERT[] = "cert";
                 static constexpr char JSON_KEY_KEY[] = "key";
                 static constexpr char JSON_KEY_ROOT_CA[] = "root-ca";
                 static constexpr char JSON_KEY_THING_NAME[] = "thing-name";
+                static constexpr char JSON_KEY_MQTT_PORT[] = "mqtt-port";
+                static constexpr char JSON_KEY_MQTT_ALPN[] = "mqtt-alpn";
                 static constexpr char JSON_KEY_JOBS[] = "jobs";
                 static constexpr char JSON_KEY_TUNNELING[] = "tunneling";
                 static constexpr char JSON_KEY_DEVICE_DEFENDER[] = "device-defender";
@@ -107,6 +111,8 @@ namespace Aws
                 Aws::Crt::Optional<std::string> key;
                 Aws::Crt::Optional<std::string> rootCa;
                 Aws::Crt::Optional<std::string> thingName;
+                Aws::Crt::Optional<uint16_t> mqttPort;       // Optional MQTT port (default: 8883, use 443 for ALPN)
+                Aws::Crt::Optional<std::string> mqttAlpn;    // Optional ALPN protocol name (e.g., "x-amzn-mqtt-ca" for port 443)
 
                 std::string lockFilePath{DEFAULT_LOCK_FILE_PATH};
 

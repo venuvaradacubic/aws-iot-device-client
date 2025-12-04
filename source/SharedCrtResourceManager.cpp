@@ -330,22 +330,21 @@ int SharedCrtResourceManager::establishConnection(const PlainConfig &config)
     {
         clientConfigBuilder.WithCertificateAuthority(config.rootCa->c_str());
     }
-    
+
     // Configure MQTT port override (e.g., 443 for restrictive networks)
     if (config.mqttPort.has_value())
     {
         clientConfigBuilder.WithPortOverride(config.mqttPort.value());
         LOGM_INFO(TAG, "Using MQTT port override: %u", config.mqttPort.value());
-        
-        // If port 443 is used, configure ALPN for AWS IoT Core
+
+        // If port 443 is used, log ALPN configuration info
         if (config.mqttPort.value() == 443)
         {
             std::string alpnProtocol = config.mqttAlpn.has_value() ? config.mqttAlpn.value() : "x-amzn-mqtt-ca";
-            clientConfigBuilder.WithProtocolOperationTimeout(60000); // Increase timeout for port 443
-            LOGM_INFO(TAG, "Port 443 detected, using ALPN protocol: %s", alpnProtocol.c_str());
+            LOGM_INFO(TAG, "Port 443 detected - ALPN protocol will be used: %s", alpnProtocol.c_str());
         }
     }
-    
+
     clientConfigBuilder.WithSdkName(SharedCrtResourceManager::BINARY_NAME);
     clientConfigBuilder.WithSdkVersion(DEVICE_CLIENT_VERSION);
 

@@ -81,6 +81,9 @@ namespace Aws
                     std::vector<std::string> upRouteLocalTopics;
                     // Track currently subscribed local topics to avoid redundant operations
                     std::unordered_set<std::string> subscribedLocalTopics;
+                    // Track recently received local messages to deduplicate overlapping subscriptions
+                    mutable std::mutex recentMessagesMutex;
+                    std::unordered_map<std::string, std::chrono::steady_clock::time_point> recentMessages;
                     // Guard for subscription list
                     std::mutex subscriptionMutex;
                     // Flag to know if initial subscription pass done after first connect
@@ -130,6 +133,13 @@ namespace Aws
                     bool setupConnections();
                     // Subscribe to all up-route local topics (idempotent) if connected
                     void subscribeUpRouteTopicsIfConnected(bool forceResubscribe = false);
+
+                    /**
+                     * brief Check if message should be dropped as recent duplicate
+                     * @param topic Message topic
+                     * @return true if this is a duplicate that should be dropped
+                     */
+                    bool isRecentDuplicate(const std::string& topic);
 
                     /**
                      * @brief Cleanup all resources and stop threads

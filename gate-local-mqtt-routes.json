@@ -1,0 +1,55 @@
+{
+  "routes": [
+    { "direction": "down", "awsTopic": "devices/${thingName}/config/gate/validation", "localTopicTemplate": "config/gate/validation", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/validation", "awsTopic": "devices/${thingName}/status/gate/validation", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/control/gate/validation/lock",   "localTopicTemplate": "control/gate/validation/lock", "qos": 1 },
+    { "direction": "down", "awsTopic": "devices/${thingName}/control/gate/validation/unlock", "localTopicTemplate": "control/gate/validation/unlock", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/validation/lock", "awsTopic": "devices/${thingName}/status/gate/validation/lock", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/events/validator/validation/success", "localTopicTemplate": "events/validator/validation/success", "qos": 1 },
+    { "direction": "down", "awsTopic": "devices/${thingName}/events/validator/validation/fail",    "localTopicTemplate": "events/validator/validation/fail",    "qos": 1 },
+    { "direction": "up",   "localTopic": "events/gate/validations", "awsTopic": "devices/${thingName}/events/gate/validations", "qos": 1 },
+
+    { "direction": "up",   "localTopic": "status/gate/credits", "awsTopic": "devices/${thingName}/status/gate/credits", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/control/gate/mode", "localTopicTemplate": "control/gate/mode", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/mode", "awsTopic": "devices/${thingName}/status/gate/mode", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/emergency", "awsTopic": "devices/${thingName}/status/gate/emergency", "qos": 1 },
+    { "direction": "down", "awsTopic": "devices/${thingName}/control/gate/reboot", "localTopicTemplate": "control/gate/reboot", "qos": 1 },
+
+    { "direction": "up",   "localTopic": "status/gate/emergencyButton", "awsTopic": "devices/${thingName}/status/gate/emergencyButton", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/faults", "awsTopic": "devices/${thingName}/status/gate/faults", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/paddles", "awsTopic": "devices/${thingName}/status/gate/paddles", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/paddlesForced", "awsTopic": "devices/${thingName}/status/gate/paddlesForced", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/panelAccess", "awsTopic": "devices/${thingName}/status/gate/panelAccess", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/power", "awsTopic": "devices/${thingName}/status/gate/power", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/sensorsBlocked", "awsTopic": "devices/${thingName}/status/gate/sensorsBlocked", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/software", "awsTopic": "devices/${thingName}/status/gate/software", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/stats", "awsTopic": "devices/${thingName}/status/gate/stats", "qos": 1, "throttleSeconds": 10 },
+
+    { "direction": "up",   "localTopic": "status/validator/state", "awsTopic": "devices/${thingName}/status/validator/state", "qos": 1 },
+
+    { "direction": "up",   "localTopic": "heartbeat/gate", "awsTopic": "devices/${thingName}/heartbeat/gate", "qos": 1, "throttleSeconds": 10 },
+     { "direction": "up",   "localTopic": "heartbeat/pod/parent", "awsTopic": "devices/${thingName}/heartbeat/pod/parent", "qos": 1, "throttleSeconds": 10 },
+      { "direction": "up",   "localTopic": "heartbeat/pod/child", "awsTopic": "devices/${thingName}/heartbeat/pod/child", "qos": 1, "throttleSeconds": 10 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/config/gate/sensors", "localTopicTemplate": "config/gate/sensors", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/sensors", "awsTopic": "devices/${thingName}/status/gate/sensors", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/config/gate/paddleForces", "localTopicTemplate": "config/gate/paddleForces", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/paddleForces", "awsTopic": "devices/${thingName}/status/gate/paddleForces", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/config/gate/paddleSpeeds", "localTopicTemplate": "config/gate/paddleSpeeds", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/paddleSpeeds", "awsTopic": "devices/${thingName}/status/gate/paddleSpeeds", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/config/gate/system", "localTopicTemplate": "config/gate/system", "qos": 1 },
+    { "direction": "up",   "localTopic": "status/gate/system", "awsTopic": "devices/${thingName}/status/gate/system", "qos": 1 },
+
+    { "direction": "down", "awsTopic": "devices/${thingName}/control/gate/metrics/reset", "localTopicTemplate": "control/gate/metrics/reset", "qos": 1 },
+    { "direction": "up",   "localTopic": "metrics/gate/credits",  "awsTopic": "devices/${thingName}/metrics/gate/credits",  "qos": 1, "throttleSeconds": 60 },
+    { "direction": "up",   "localTopic": "metrics/gate/evasion",  "awsTopic": "devices/${thingName}/metrics/gate/evasion",  "qos": 1, "throttleSeconds": 60 },
+    { "direction": "up",   "localTopic": "metrics/gate/paddles",  "awsTopic": "devices/${thingName}/metrics/gate/paddles",  "qos": 1, "throttleSeconds": 60 },
+    { "direction": "up",   "localTopic": "metrics/gate/passage",  "awsTopic": "devices/${thingName}/metrics/gate/passage",  "qos": 1, "throttleSeconds": 60 }
+  ]
+}

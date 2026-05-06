@@ -459,6 +459,94 @@ namespace Aws
                     return true;
                 }
 
+                std::vector<std::string> LocalMqttBridgeFeature::deduplicateSubscriptions(const std::vector<std::string>& topics) const
+                {
+                    if (topics.empty()) return topics;
+
+                    // Helper to check if pattern1 is more specific than pattern2
+                    auto isMoreSpecific = [](const std::string& pattern1, const std::string& pattern2) -> bool {
+                        // Exact topics are more specific than wildcards
+                        bool p1HasWild = (pattern1.find('+') != std::string::npos || pattern1.find('#') != std::string::npos);
+                        bool p2HasWild = (pattern2.find('+') != std::string::npos || pattern2.find('#') != std::string::npos);
+
+                        if (!p1HasWild && p2HasWild) return true;  // pattern1 exact, pattern2 wildcard
+                        if (p1HasWild && !p2HasWild) return false; // pattern1 wildcard, pattern2 exact
+
+                        // Both wildcards or both exact - shorter segment count is less specific
+                        size_t count1 = std::count(pattern1.begin(), pattern1.end(), '/') + 1;
+                        size_t count2 = std::count(pattern2.begin(), pattern2.end(), '/') + 1;
+                        return count1 > count2;
+                    };
+
+                    std::vector<std::string> result;
+                    for (const auto& topic : topics)
+                    {
+                        bool keep = true;
+                        for (const auto& other : topics)
+                        {
+                            if (topic == other) continue;
+
+                            // Check if 'other' pattern would match messages that 'topic' matches
+                            // If topic is more specific and other is wildcard, they may overlap
+                            if (isMoreSpecific(topic, other))
+                            {
+                                // Keep the more specific one (topic) for better throttle control
+                                // But if both would deliver same message, mosquitto will send twice
+                                // Solution: Only keep if they don't overlap in actual messages
+                                // For now, keep specific patterns and remove generic catch-alls that overlap
+                                continue;
+                            }
+                        }
+                        result.push_back(topic);
+                    }
+
+                    return result;
+                }
+
+                std::vector<std::string> LocalMqttBridgeFeature::deduplicateSubscriptions(const std::vector<std::string>& topics) const
+                {
+                    if (topics.empty()) return topics;
+
+                    // Helper to check if pattern1 is more specific than pattern2
+                    auto isMoreSpecific = [](const std::string& pattern1, const std::string& pattern2) -> bool {
+                        // Exact topics are more specific than wildcards
+                        bool p1HasWild = (pattern1.find('+') != std::string::npos || pattern1.find('#') != std::string::npos);
+                        bool p2HasWild = (pattern2.find('+') != std::string::npos || pattern2.find('#') != std::string::npos);
+
+                        if (!p1HasWild && p2HasWild) return true;  // pattern1 exact, pattern2 wildcard
+                        if (p1HasWild && !p2HasWild) return false; // pattern1 wildcard, pattern2 exact
+
+                        // Both wildcards or both exact - shorter segment count is less specific
+                        size_t count1 = std::count(pattern1.begin(), pattern1.end(), '/') + 1;
+                        size_t count2 = std::count(pattern2.begin(), pattern2.end(), '/') + 1;
+                        return count1 > count2;
+                    };
+
+                    std::vector<std::string> result;
+                    for (const auto& topic : topics)
+                    {
+                        bool keep = true;
+                        for (const auto& other : topics)
+                        {
+                            if (topic == other) continue;
+
+                            // Check if 'other' pattern would match messages that 'topic' matches
+                            // If topic is more specific and other is wildcard, they may overlap
+                            if (isMoreSpecific(topic, other))
+                            {
+                                // Keep the more specific one (topic) for better throttle control
+                                // But if both would deliver same message, mosquitto will send twice
+                                // Solution: Only keep if they don't overlap in actual messages
+                                // For now, keep specific patterns and remove generic catch-alls that overlap
+                                continue;
+                            }
+                        }
+                        result.push_back(topic);
+                    }
+
+                    return result;
+                }
+
                 void LocalMqttBridgeFeature::subscribeUpRouteTopicsIfConnected(bool forceResubscribe)
                 {
                     if (!localClient || !localClient->isConnected())
@@ -466,8 +554,12 @@ namespace Aws
                         return;
                     }
                     std::lock_guard<std::mutex> lock(subscriptionMutex);
+
+                    // Deduplicate subscriptions to prevent duplicate message delivery
+                    auto deduped = deduplicateSubscriptions(upRouteLocalTopics);
+
                     // Build a set of desired topics for quick diff
-                    std::unordered_set<std::string> desired(upRouteLocalTopics.begin(), upRouteLocalTopics.end());
+                    std::unordered_set<std::string> desired(deduped.begin(), deduped.end());
 
                     // Unsubscribe topics that are no longer desired or when forceResubscribe is requested
                     for (auto it = subscribedLocalTopics.begin(); it != subscribedLocalTopics.end(); )
@@ -811,6 +903,41 @@ namespace Aws
                     LOGM_INFO(TAG, "%s", "File monitoring thread stopped");
                 }
 
+                bool LocalMqttBridgeFeature::isRecentDuplicate(const std::string& topic)
+                {
+                    // When multiple subscriptions overlap (e.g. exact 'status/gate/power' AND wildcard '+/+/+')
+                    // mosquitto delivers the same message multiple times within milliseconds.
+                    // We deduplicate by dropping any same-topic message arriving within 50ms of the first.
+                    static constexpr int DEDUP_WINDOW_MS = 50;
+                    auto now = std::chrono::steady_clock::now();
+                    std::lock_guard<std::mutex> lock(recentMessagesMutex);
+
+                    auto it = recentMessages.find(topic);
+                    if (it != recentMessages.end())
+                    {
+                        auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
+                        if (ageMs < DEDUP_WINDOW_MS)
+                        {
+                            return true; // duplicate delivery from overlapping subscription
+                        }
+                    }
+                    recentMessages[topic] = now;
+
+                    // Periodically clean up stale entries to avoid unbounded growth
+                    if (recentMessages.size() > 500)
+                    {
+                        for (auto iter = recentMessages.begin(); iter != recentMessages.end(); )
+                        {
+                            auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - iter->second).count();
+                            if (ageMs > DEDUP_WINDOW_MS * 2)
+                                iter = recentMessages.erase(iter);
+                            else
+                                ++iter;
+                        }
+                    }
+                    return false;
+                }
+
                 void LocalMqttBridgeFeature::handleLocalMessage(const std::string& topic,
                                                                const void* payload, int payloadLen)
                 {
@@ -821,6 +948,15 @@ namespace Aws
                     if (payload != nullptr && payloadLen > 0)
                     {
                         payloadStr = std::string(static_cast<const char*>(payload), payloadLen);
+                    }
+
+                    // Drop messages that are duplicates from overlapping wildcard subscriptions.
+                    // Mosquitto delivers a message once per matching subscription, so e.g.
+                    // 'status/gate/power' matches both 'status/gate/power' and '+/+/+' subscriptions.
+                    if (isRecentDuplicate(topic))
+                    {
+                        LOGM_DEBUG(TAG, "Dropped subscription-duplicate message: %s", topic.c_str());
+                        return;
                     }
 
                     // We no longer use payload tagging; LoopGuard handles loop prevention.

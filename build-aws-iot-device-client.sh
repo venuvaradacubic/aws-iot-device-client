@@ -101,10 +101,10 @@ PKG_LOGROTATE_DIR=${PKG_DIR}/etc/logrotate.d
 PKG_SYSTEMD_DIR=${PKG_DIR}/etc/systemd/system
 PKG_TMPFILES_DIR=${PKG_DIR}/etc/tmpfiles.d
 PKG_VAR_LOG_DIR=${PKG_DIR}/var/log/${SERVICE_NAME}
-PKG_DEFAULT_CONF_DIR=${PKG_DIR}/etc/.aws-iot-device-client
+PKG_DEFAULT_CONF_DIR=${PKG_DIR}/etc/aws-iot-device-client
 PKG_ENV_DIR=${PKG_DIR}/etc/default
 PKG_LIBEXEC_DIR=${PKG_DIR}/usr/lib/${SERVICE_NAME}
-PKG_OPT_FGATE_DIR=${PKG_DIR}/opt/fgate/aws-iot-device-client
+PKG_OPT_DIR=${PKG_DIR}/opt/aws-iot-device-client
 
 mkdir -p \
   "${PKG_DEBIAN_DIR}" \
@@ -118,7 +118,7 @@ mkdir -p \
   "${PKG_DEFAULT_CONF_DIR}" \
   "${PKG_ENV_DIR}" \
   "${PKG_LIBEXEC_DIR}" \
-  "${PKG_OPT_FGATE_DIR}"
+  "${PKG_OPT_DIR}"
 
 
 cp "${BIN_SRC}" "${PKG_BIN_DIR}/${SERVICE_NAME}"
@@ -132,6 +132,15 @@ if [ -f "${SOFTWAREUPDATE_SRC}" ]; then
   echo "Packaged softwareupdate.sh job handler"
 else
   echo "Warning: softwareupdate.sh not found at ${SOFTWAREUPDATE_SRC}"
+fi
+
+LOGDOWNLOAD_SRC="${ROOT_DIR}/logdownload.sh"
+if [ -f "${LOGDOWNLOAD_SRC}" ]; then
+  cp "${LOGDOWNLOAD_SRC}" "${PKG_LIBEXEC_DIR}/logdownload.sh"
+  chmod 0755 "${PKG_LIBEXEC_DIR}/logdownload.sh"
+  echo "Packaged logdownload.sh job handler"
+else
+  echo "Warning: logdownload.sh not found at ${LOGDOWNLOAD_SRC}"
 fi
 
 
@@ -152,18 +161,18 @@ fi
 cat > "${PKG_DEFAULT_CONF_DIR}/aws-iot-device-client.conf" <<'EOF'
 {
   "endpoint": "AWS_IOT_ENDPOINT_PLACEHOLDER",
-  "cert": "/opt/fgate/aws-iot-device-client/certs/claim-certificate.pem.crt",
-  "key": "/opt/fgate/aws-iot-device-client/certs/claim-private.pem.key",
-  "root-ca": "/opt/fgate/aws-iot-device-client/certs/AmazonRootCA1.pem",
+  "cert": "/opt/aws-iot-device-client/certs/claim-certificate.pem.crt",
+  "key": "/opt/aws-iot-device-client/certs/claim-private.pem.key",
+  "root-ca": "/opt/aws-iot-device-client/certs/AmazonRootCA1.pem",
   "thing-name": "THING_NAME_PLACEHOLDER",
   "fleet-provisioning": {
     "enabled": true,
     "template-name": "FLEET_PROVISIONING_TEMPLATE_PLACEHOLDER",
-    "template-parameters": "{\"deviceId\": \"THING_NAME_PLACEHOLDER\", \"gateType\": \"GATE_TYPE_PLACEHOLDER\", \"gateId\": \"FLARE_GATE_ID_PLACEHOLDER\"}"
+    "template-parameters": "{\"serialNumber\": \"THING_NAME_PLACEHOLDER\"}"
   },
   "jobs": {
     "enabled": true,
-    "handler-directory": "/etc/.aws-iot-device-client/jobs"
+    "handler-directory": "/etc/aws-iot-device-client/jobs"
   },
   "tunneling": {
     "enabled": true
@@ -173,27 +182,12 @@ cat > "${PKG_DEFAULT_CONF_DIR}/aws-iot-device-client.conf" <<'EOF'
     "interval": 300
   },
   "logging": {
-    "level": "DEBUG",
+    "level": "INFO",
     "type": "FILE",
     "file": "/var/log/aws-iot-device-client/aws-iot-device-client.log"
   },
-  "samples": {
-    "pub-sub": {
-      "enabled": true,
-      "publish-topic": "config-paddle-force",
-  "publish-file": "/var/lib/aws-iot-device-client/pubsub/publish-file.txt",
-      "subscribe-topic": "config-paddle-force",
-  "subscribe-file": "/var/lib/aws-iot-device-client/pubsub/subscribe-file.txt"
-    }
-  },
   "config-shadow": {
     "enabled": true
-  },
-  "sample-shadow": {
-    "enabled": true,
-    "shadow-name": "gate-controller",
-    "shadow-input-file": "/opt/fgate/aws-iot-device-client/shadow/device-shadow-input.json",
-    "shadow-output-file": "/opt/fgate/aws-iot-device-client/shadow/device-shadow-output.json"
   },
   "localMqttBridge": {
     "enabled": true,
@@ -204,19 +198,8 @@ cat > "${PKG_DEFAULT_CONF_DIR}/aws-iot-device-client.conf" <<'EOF'
       "username": "",
       "password": ""
     },
-    "routes": [
-    {
-        "direction": "up",
-        "localTopic": "config/gate/paddleForces",
-        "awsTopic": "devices/${thingName}/config/gate/paddleForces",
-        "qos": 1,
-        "throttleSeconds": 0
-      },{
-        "direction": "down",
-        "awsTopic": "devices/${thingName}/status/gate/paddleForces",
-        "localTopicTemplate": "status/gate/paddleForces",
-        "qos": 0
-      }],
+    "routesFile": "/opt/aws-iot-device-client/gate-local-mqtt-routes.json",
+    "routesFileJsonPointer": "/routes",
     "queue": {
       "maxInMemory": 200,
       "dedupeHeartbeat": true
@@ -234,19 +217,9 @@ cat > "${PKG_DEFAULT_CONF_DIR}/aws-iot-device-client.conf" <<'EOF'
 }
 EOF
 
-cat > "${PKG_OPT_FGATE_DIR}/aws-iot-config.env.example" <<'EOF'
-# AWS IoT Device Client Configuration (Example)
-# Copy to aws-iot-config.env and uncomment values to activate.
 
-#AWS_IOT_ENDPOINT=your-endpoint.iot.region.amazonaws.com
-#THING_NAME=your-device-thing-name
-#FLEET_PROVISIONING_TEMPLATE=your-fleet-provisioning-template-name
-#GATE_TYPE=your-gate-type
-#FLARE_GATE_ID=your-gate-id
-EOF
-
-PKG_NAME=${PKG_NAME:-aws-iot-device-client-fgate}
-PKG_VERSION=${PKG_VERSION:-1.10.1}
+PKG_NAME=${PKG_NAME:-aws-iot-device-client}
+PKG_VERSION=${PKG_VERSION:-1.10.1.1}
 cat > "${PKG_DEBIAN_DIR}/control" <<EOF
 Package: ${PKG_NAME}
 Version: ${PKG_VERSION}
@@ -254,14 +227,13 @@ Section: net
 Priority: optional
 Architecture: ${ARCH}
 Maintainer: Venu madhavan Varada <venumadhavan.varada@cubic.com>
-Description: AWS IoT Device Client packaged for Field Gate
+Description: AWS IoT Device Client Package
  Device-side app that connects to AWS IoT Core for Jobs, Tunneling, Defender, etc.
 Depends: libssl3 | libssl1.1, zlib1g, jq, systemd
 EOF
 
 
 cat > "${PKG_DEBIAN_DIR}/conffiles" <<EOF
-/etc/.aws-iot-device-client/aws-iot-device-client.conf
 /etc/default/aws-iot-device-client
 EOF
 
@@ -270,158 +242,80 @@ cat > "${PKG_DEBIAN_DIR}/postinst" <<'EOF'
 set -e
 
 SERVICE=aws-iot-device-client
-CONF_DIR=/etc/.aws-iot-device-client
+CONF_DIR=/etc/aws-iot-device-client
 LOG_DIR=/var/log/${SERVICE}
-USER=root
-GROUP=root
-CLAIM_CERTS_DIR=/opt/fgate/aws-iot-device-client/certs
-IDENTITY_DIR=/opt/fgate/aws-iot-device-client/identity
-LEGACY_KEYS_DIR=/home/${USER}/.aws-iot-device-client/keys
+CLAIM_CERTS_DIR=/opt/aws-iot-device-client/certs
+IDENTITY_DIR=/opt/aws-iot-device-client/identity
 
-if ! getent group ${GROUP} >/dev/null; then
-    addgroup --quiet --system ${GROUP}
-fi
-if ! getent passwd ${USER} >/dev/null; then
-    adduser --quiet --system --ingroup ${GROUP} --home /home/${USER} --disabled-login ${USER}
-fi
+# Create required directories with proper permissions per AWS documentation
+# https://github.com/awslabs/aws-iot-device-client/blob/main/docs/PERMISSIONS.md
+install -d -m 0745 ${LOG_DIR}                              # Log directory: 745
+install -d -m 0745 /etc/aws-iot-device-client              # Config directory: 745
+install -d -m 0700 /etc/aws-iot-device-client/jobs         # Job handlers: 700
+install -d -m 0755 /opt/aws-iot-device-client              # Base directory
+install -d -m 0700 ${CLAIM_CERTS_DIR}                      # Certificates: 700
+install -d -m 0700 ${IDENTITY_DIR}                         # Certificates: 700
 
-install -d -m 0700 -o ${USER} -g ${GROUP} /home/${USER}
-install -d -m 0700 -o ${USER} -g ${GROUP} /home/${USER}/.aws-iot-device-client
-install -d -m 0700 -o ${USER} -g ${GROUP} ${LEGACY_KEYS_DIR}
-
-
-install -d -m 0745 -o ${USER} -g ${GROUP} ${LOG_DIR}
-install -d -m 0745 -o ${USER} -g ${GROUP} /etc/.aws-iot-device-client
-install -d -m 0700 -o ${USER} -g ${GROUP} /etc/.aws-iot-device-client/jobs
-
-install -d -m 0700 -o ${USER} -g ${GROUP} /opt/fgate
-install -d -m 0700 -o ${USER} -g ${GROUP} /opt/fgate/aws-iot-device-client
-install -d -m 0700 -o ${USER} -g ${GROUP} ${CLAIM_CERTS_DIR}
-install -d -m 0700 -o ${USER} -g ${GROUP} ${IDENTITY_DIR}
-
-SHADOW_DIR=/opt/fgate/aws-iot-device-client/shadow
-install -d -m 0700 -o ${USER} -g ${GROUP} ${SHADOW_DIR}
-STATE_DIR=/var/lib/aws-iot-device-client
-PUBSUB_DIR=${STATE_DIR}/pubsub
-install -d -m 0745 -o ${USER} -g ${GROUP} ${STATE_DIR}
-install -d -m 0745 -o ${USER} -g ${GROUP} ${PUBSUB_DIR}
-
+# Create log file if missing with proper permissions
 LOG_FILE=${LOG_DIR}/aws-iot-device-client.log
 if [ ! -f ${LOG_FILE} ]; then
-  install -m 0600 -o ${USER} -g ${GROUP} /dev/null ${LOG_FILE}
-else
-  chown ${USER}:${GROUP} ${LOG_FILE} || true
-  chmod 0600 ${LOG_FILE} || true
+  touch ${LOG_FILE}
+  chmod 0600 ${LOG_FILE}                                   # Log file: 600
 fi
 
+# Set config file permissions if exists
 if [ -f ${CONF_DIR}/aws-iot-device-client.conf ]; then
-  chown ${USER}:${GROUP} ${CONF_DIR}/aws-iot-device-client.conf || true
-  chmod 0640 ${CONF_DIR}/aws-iot-device-client.conf || true
+  chmod 0640 ${CONF_DIR}/aws-iot-device-client.conf        # Config file: 640 (recommended)
 fi
 
-SOFTWAREUPDATE_SCRIPT="/etc/.aws-iot-device-client/jobs/softwareupdate.sh"
-if [ ! -f ${SOFTWAREUPDATE_SCRIPT} ]; then
-  if [ -f /usr/lib/${SERVICE}/softwareupdate.sh ]; then
-    cp /usr/lib/${SERVICE}/softwareupdate.sh ${SOFTWAREUPDATE_SCRIPT}
-    chown ${USER}:${GROUP} ${SOFTWAREUPDATE_SCRIPT}
-    chmod 0755 ${SOFTWAREUPDATE_SCRIPT}
-  fi
+# Copy job handler scripts from /usr/lib and ensure they are executable
+DMS_TOOLS_DIR="/usr/lib/${SERVICE}"
+SOFTWAREUPDATE_SCRIPT="/etc/aws-iot-device-client/jobs/softwareupdate.sh"
+LOGDOWNLOAD_SCRIPT="/etc/aws-iot-device-client/jobs/logdownload.sh"
+
+if [ -f "${DMS_TOOLS_DIR}/softwareupdate.sh" ]; then
+  cp "${DMS_TOOLS_DIR}/softwareupdate.sh" ${SOFTWAREUPDATE_SCRIPT}
+  chmod 0700 ${SOFTWAREUPDATE_SCRIPT}
+  echo "Copied and set permissions for softwareupdate.sh"
 fi
 
+if [ -f "${DMS_TOOLS_DIR}/logdownload.sh" ]; then
+  cp "${DMS_TOOLS_DIR}/logdownload.sh" ${LOGDOWNLOAD_SCRIPT}
+  chmod 0700 ${LOGDOWNLOAD_SCRIPT}
+  echo "Copied and set permissions for logdownload.sh"
+fi
+
+# Copy sample job handlers
 SAMPLE_HANDLERS_PKG_DIR="/usr/lib/${SERVICE}/sample-job-handlers"
 if [ -d "${SAMPLE_HANDLERS_PKG_DIR}" ]; then
-    cp -r ${SAMPLE_HANDLERS_PKG_DIR}/* /etc/.aws-iot-device-client/jobs/
-    find /etc/.aws-iot-device-client/jobs -type f -exec chown ${USER}:${GROUP} {} \; || true
-    find /etc/.aws-iot-device-client/jobs -type f -name "*.sh" -exec chmod 0755 {} \; || true
-    find /etc/.aws-iot-device-client/jobs -type f ! -name "*.sh" -exec chmod 0700 {} \; || true
+    cp -r ${SAMPLE_HANDLERS_PKG_DIR}/* /etc/aws-iot-device-client/jobs/
+    find /etc/aws-iot-device-client/jobs -type f -name "*.sh" -exec chmod 0700 {} \;
+    find /etc/aws-iot-device-client/jobs -type f ! -name "*.sh" -exec chmod 0700 {} \;
 fi
 
-# Job handler script permissions - 700 (required for most scripts, 755 for shell scripts)
-if [ -d /etc/.aws-iot-device-client/jobs ]; then
-  find /etc/.aws-iot-device-client/jobs -maxdepth 1 -type f -exec chown ${USER}:${GROUP} {} \; || true
-  # Set executable permissions for job handlers
-  find /etc/.aws-iot-device-client/jobs -maxdepth 1 -type f -name "*.sh" -exec chmod 0755 {} \; || true
-  # Set secure permissions for other job files
-  find /etc/.aws-iot-device-client/jobs -maxdepth 1 -type f ! -name "*.sh" -exec chmod 0700 {} \; || true
-fi
-
-# Ensure AWS IoT configuration file exists (copy from example if missing)
-AWS_CONFIG_FILE=/opt/fgate/aws-iot-device-client/aws-iot-config.env
-AWS_CONFIG_EXAMPLE=/opt/fgate/aws-iot-device-client/aws-iot-config.env.example
-if [ ! -f ${AWS_CONFIG_FILE} ] && [ -f ${AWS_CONFIG_EXAMPLE} ]; then
-  cp ${AWS_CONFIG_EXAMPLE} ${AWS_CONFIG_FILE}
-  echo "Created ${AWS_CONFIG_FILE} from example template" || true
-fi
-if [ -f ${AWS_CONFIG_FILE} ]; then
-  chown ${USER}:${GROUP} ${AWS_CONFIG_FILE} || true
-  chmod 0640 ${AWS_CONFIG_FILE} || true
-fi
-
-if [ ! -f ${SHADOW_DIR}/device-shadow-input.json ]; then
-  cat > ${SHADOW_DIR}/device-shadow-input.json <<'JSON'
-{"state":{"reported":{}}}
-JSON
-  chown ${USER}:${GROUP} ${SHADOW_DIR}/device-shadow-input.json || true
-  chmod 0600 ${SHADOW_DIR}/device-shadow-input.json || true
-fi
-if [ ! -f ${SHADOW_DIR}/device-shadow-output.json ]; then
-  install -m 0600 -o ${USER} -g ${GROUP} /dev/null ${SHADOW_DIR}/device-shadow-output.json || true
-fi
-if [ -f ${SHADOW_DIR}/device-shadow-input.json ]; then
-  chown ${USER}:${GROUP} ${SHADOW_DIR}/device-shadow-input.json || true
-  chmod 0600 ${SHADOW_DIR}/device-shadow-input.json || true
-fi
-if [ -f ${SHADOW_DIR}/device-shadow-output.json ]; then
-  chown ${USER}:${GROUP} ${SHADOW_DIR}/device-shadow-output.json || true
-  chmod 0600 ${SHADOW_DIR}/device-shadow-output.json || true
-fi
-
-PUBLISH_FILE=${PUBSUB_DIR}/publish-file.txt
-SUBSCRIBE_FILE=${PUBSUB_DIR}/subscribe-file.txt
-if [ ! -f ${PUBLISH_FILE} ]; then
-  install -m 0600 -o ${USER} -g ${GROUP} /dev/null ${PUBLISH_FILE} || true
-fi
-if [ ! -f ${SUBSCRIBE_FILE} ]; then
-  install -m 0600 -o ${USER} -g ${GROUP} /dev/null ${SUBSCRIBE_FILE} || true
-fi
-chown ${USER}:${GROUP} ${PUBLISH_FILE} ${SUBSCRIBE_FILE} 2>/dev/null || true
-chmod 0600 ${PUBLISH_FILE} ${SUBSCRIBE_FILE} 2>/dev/null || true
-
-if [ -d /run/${SERVICE} ]; then chmod 0745 /run/${SERVICE} || true; fi
-if [ -f ${LEGACY_KEYS_DIR}/active-private.pem.key ] && [ ! -f ${IDENTITY_DIR}/active-private.pem.key ]; then
-  mv ${LEGACY_KEYS_DIR}/active-private.pem.key ${IDENTITY_DIR}/ 2>/dev/null || true
-fi
-if [ -f ${LEGACY_KEYS_DIR}/active-certificate.pem.crt ] && [ ! -f ${IDENTITY_DIR}/active-certificate.pem.crt ]; then
-  mv ${LEGACY_KEYS_DIR}/active-certificate.pem.crt ${IDENTITY_DIR}/ 2>/dev/null || true
-fi
-
+# Set permissions on certificate files
 if [ -f ${CLAIM_CERTS_DIR}/claim-private.pem.key ]; then
-  chown ${USER}:${GROUP} ${CLAIM_CERTS_DIR}/claim-private.pem.key || true
-  chmod 0600 ${CLAIM_CERTS_DIR}/claim-private.pem.key || true
+  chmod 0600 ${CLAIM_CERTS_DIR}/claim-private.pem.key
 fi
 if [ -f ${CLAIM_CERTS_DIR}/claim-certificate.pem.crt ]; then
-  chown ${USER}:${GROUP} ${CLAIM_CERTS_DIR}/claim-certificate.pem.crt || true
-  chmod 0644 ${CLAIM_CERTS_DIR}/claim-certificate.pem.crt || true
+  chmod 0644 ${CLAIM_CERTS_DIR}/claim-certificate.pem.crt
 fi
 if [ -f ${CLAIM_CERTS_DIR}/AmazonRootCA1.pem ]; then
-  chown ${USER}:${GROUP} ${CLAIM_CERTS_DIR}/AmazonRootCA1.pem || true
-  chmod 0644 ${CLAIM_CERTS_DIR}/AmazonRootCA1.pem || true
+  chmod 0644 ${CLAIM_CERTS_DIR}/AmazonRootCA1.pem
 fi
-
 if [ -f ${IDENTITY_DIR}/active-private.pem.key ]; then
-  chown ${USER}:${GROUP} ${IDENTITY_DIR}/active-private.pem.key || true
-  chmod 0600 ${IDENTITY_DIR}/active-private.pem.key || true
+  chmod 0600 ${IDENTITY_DIR}/active-private.pem.key
 fi
 if [ -f ${IDENTITY_DIR}/active-certificate.pem.crt ]; then
-  chown ${USER}:${GROUP} ${IDENTITY_DIR}/active-certificate.pem.crt || true
-  chmod 0644 ${IDENTITY_DIR}/active-certificate.pem.crt || true
+  chmod 0644 ${IDENTITY_DIR}/active-certificate.pem.crt
 fi
 
+# Apply systemd tmpfiles and enable service
 systemd-tmpfiles --create /etc/tmpfiles.d/${SERVICE}.conf || true
 
-systemctl daemon-reexec || true
+systemctl daemon-reload || true
 systemctl enable ${SERVICE} || true
-systemctl restart ${SERVICE} || true
+echo "Service enabled. Will start after prerequisites are available."
 EOF
 chmod 0755 "${PKG_DEBIAN_DIR}/postinst"
 
@@ -469,17 +363,17 @@ Wants=network.target
 
 [Service]
 Type=simple
-
 User=root
 Group=root
 EnvironmentFile=-/etc/default/aws-iot-device-client
 RuntimeDirectory=aws-iot-device-client
 RuntimeDirectoryMode=0745
+ExecStartPre=/usr/lib/aws-iot-device-client/wait-for-prerequisites.sh
 ExecStartPre=/usr/lib/aws-iot-device-client/gen-config.sh
 ExecStart=/usr/sbin/aws-iot-device-client --config-file /run/aws-iot-device-client/aws-iot-device-client.conf
 Restart=on-failure
+RestartSec=30
 SyslogIdentifier=aws-iot-device-client
-
 
 [Install]
 WantedBy=multi-user.target
@@ -488,25 +382,88 @@ EOF
 cat > "${PKG_TMPFILES_DIR}/${SERVICE_NAME}.conf" <<'EOF'
 d /var/log/aws-iot-device-client 0745 root root -
 f /var/log/aws-iot-device-client/aws-iot-device-client.log 0600 root root -
-d /var/lib/aws-iot-device-client 0745 root root -
-d /var/lib/aws-iot-device-client/pubsub 0745 root root -
-d /opt/fgate 0755 root root -
-d /opt/fgate/aws-iot-device-client 0755 root root -
-d /opt/fgate/aws-iot-device-client/certs 0700 root root -
-d /opt/fgate/aws-iot-device-client/shadow 0700 root root -
-d /opt/fgate/aws-iot-device-client/identity 0700 root root -
-d /etc/.aws-iot-device-client 0745 root root -
-d /etc/.aws-iot-device-client/jobs 0700 root root -
+d /opt/aws-iot-device-client 0755 root root -
+d /opt/aws-iot-device-client/certs 0700 root root -
+d /opt/aws-iot-device-client/identity 0700 root root -
+d /etc/aws-iot-device-client 0745 root root -
+d /etc/aws-iot-device-client/jobs 0700 root root -
 EOF
 
 cat > "${PKG_ENV_DIR}/${SERVICE_NAME}" <<'EOF'
 
 #AWS_IOT_ENDPOINT=
-#THING_NAME=
 #FLEET_PROVISIONING_TEMPLATE=
-#GATE_TYPE=
-#FLARE_GATE_ID=
 EOF
+
+cat > "${PKG_LIBEXEC_DIR}/wait-for-prerequisites.sh" <<'EOF'
+#!/bin/sh
+set -e
+
+SERVICE=aws-iot-device-client
+AWS_CONFIG_FILE=/opt/aws-iot-device-client/aws-iot-config.env
+CLAIM_CERTS_DIR=/opt/aws-iot-device-client/certs
+IDENTITY_DIR=/opt/aws-iot-device-client/identity
+CHECK_INTERVAL=30
+MQTT_HOST=127.0.0.1
+MQTT_PORT=1883
+MQTT_TOPIC="status/gate/hardware"
+
+echo "[$SERVICE] Checking for required files..."
+
+elapsed=0
+while true; do
+  # Check for config file
+  if [ ! -f "${AWS_CONFIG_FILE}" ]; then
+    echo "[$SERVICE] Waiting for config file: ${AWS_CONFIG_FILE} (waited ${elapsed}s)"
+    sleep $CHECK_INTERVAL
+    elapsed=$((elapsed + CHECK_INTERVAL))
+    continue
+  fi
+
+  # Check for claim certificates (identity certs are created automatically after provisioning)
+  if [ ! -f "${CLAIM_CERTS_DIR}/claim-certificate.pem.crt" ] || \
+     [ ! -f "${CLAIM_CERTS_DIR}/claim-private.pem.key" ] || \
+     [ ! -f "${CLAIM_CERTS_DIR}/AmazonRootCA1.pem" ]; then
+    echo "[$SERVICE] Waiting for claim certificates in ${CLAIM_CERTS_DIR} (waited ${elapsed}s)"
+    sleep $CHECK_INTERVAL
+    elapsed=$((elapsed + CHECK_INTERVAL))
+    continue
+  fi
+
+  # Check if mosquitto is available
+  if ! command -v mosquitto_sub >/dev/null 2>&1; then
+    echo "[$SERVICE] mosquitto_sub not found. Waiting... (waited ${elapsed}s)"
+    sleep $CHECK_INTERVAL
+    elapsed=$((elapsed + CHECK_INTERVAL))
+    continue
+  fi
+
+  # Check if mosquitto broker is running (using timeout and mosquitto_sub)
+  if ! timeout 5 mosquitto_sub -h ${MQTT_HOST} -p ${MQTT_PORT} -t '$SYS/broker/version' -C 1 >/dev/null 2>&1; then
+    echo "[$SERVICE] Local MQTT broker not available at ${MQTT_HOST}:${MQTT_PORT}. Waiting... (waited ${elapsed}s)"
+    sleep $CHECK_INTERVAL
+    elapsed=$((elapsed + CHECK_INTERVAL))
+    continue
+  fi
+
+  # Try to read serial number from MQTT topic
+  echo "[$SERVICE] Attempting to read serial number from MQTT topic: ${MQTT_TOPIC}"
+  SERIAL_NUMBER=$(timeout 10 mosquitto_sub -h ${MQTT_HOST} -p ${MQTT_PORT} -t ${MQTT_TOPIC} -C 1 2>/dev/null | jq -r '.sbc.serialNumber // empty' 2>/dev/null || echo "")
+
+  if [ -z "${SERIAL_NUMBER}" ]; then
+    echo "[$SERVICE] Serial number not available from ${MQTT_TOPIC}. Waiting... (waited ${elapsed}s)"
+    sleep $CHECK_INTERVAL
+    elapsed=$((elapsed + CHECK_INTERVAL))
+    continue
+  fi
+
+  echo "[$SERVICE] Serial number retrieved: ${SERIAL_NUMBER}"
+  echo "[$SERVICE] All required files and data found. Starting service..."
+  exit 0
+done
+EOF
+chmod 0755 "${PKG_LIBEXEC_DIR}/wait-for-prerequisites.sh"
+
 
 cat > "${PKG_LIBEXEC_DIR}/gen-config.sh" <<'EOF'
 #!/bin/sh
@@ -515,12 +472,15 @@ set -e
 SERVICE=aws-iot-device-client
 USER=root
 GROUP=root
-TEMPLATE=/etc/.aws-iot-device-client/aws-iot-device-client.conf
+TEMPLATE=/etc/aws-iot-device-client/aws-iot-device-client.conf
 OUT_DIR=/run/${SERVICE}
 OUT=${OUT_DIR}/aws-iot-device-client.conf
-AWS_CONFIG_FILE=/opt/fgate/aws-iot-device-client/aws-iot-config.env
-CLAIM_CERTS_DIR=/opt/fgate/aws-iot-device-client/certs
-IDENTITY_DIR=/opt/fgate/aws-iot-device-client/identity
+AWS_CONFIG_FILE=/opt/aws-iot-device-client/aws-iot-config.env
+CLAIM_CERTS_DIR=/opt/aws-iot-device-client/certs
+IDENTITY_DIR=/opt/aws-iot-device-client/identity
+MQTT_HOST=127.0.0.1
+MQTT_PORT=1883
+MQTT_TOPIC="status/gate/hardware"
 
 install -d -m 0750 -o ${USER} -g ${GROUP} ${OUT_DIR}
 
@@ -543,38 +503,48 @@ if [ -f "${AWS_CONFIG_FILE}" ]; then
   done < "${AWS_CONFIG_FILE}"
 fi
 
+# Read serial number from MQTT topic
+echo "Reading serial number from MQTT topic: ${MQTT_TOPIC}"
+SERIAL_NUMBER=$(timeout 10 mosquitto_sub -h ${MQTT_HOST} -p ${MQTT_PORT} -t ${MQTT_TOPIC} -C 1 2>/dev/null | jq -r '.sbc.serialNumber // empty' 2>/dev/null || echo "")
+
+if [ -z "${SERIAL_NUMBER}" ]; then
+  echo "Failed to read serial number from MQTT topic ${MQTT_TOPIC}" >&2
+  exit 1
+fi
+
 echo "AWS_IOT_ENDPOINT=${AWS_IOT_ENDPOINT:-<not set>}"
-echo "THING_NAME=${THING_NAME:-<not set>}"
 echo "FLEET_PROVISIONING_TEMPLATE=${FLEET_PROVISIONING_TEMPLATE:-<not set>}"
-echo "GATE_TYPE=${GATE_TYPE:-<not set>}"
-echo "FLARE_GATE_ID=${FLARE_GATE_ID:-<not set>}"
+echo "SERIAL_NUMBER=${SERIAL_NUMBER}"
+
+# Check for certificates in multiple locations
+# First check where AWS IoT Device Client actually stores them
+AWS_CLIENT_KEYS_DIR="/root/.aws-iot-device-client/keys"
 CERT_PATH="${CLAIM_CERTS_DIR}/claim-certificate.pem.crt"
 KEY_PATH="${CLAIM_CERTS_DIR}/claim-private.pem.key"
-if [ -f "${IDENTITY_DIR}/active-private.pem.key" ] && [ -f "${IDENTITY_DIR}/active-certificate.pem.crt" ]; then
+
+if [ -f "${AWS_CLIENT_KEYS_DIR}/active-private.pem.key" ] && [ -f "${AWS_CLIENT_KEYS_DIR}/active-certificate.pem.crt" ]; then
+  CERT_PATH="${AWS_CLIENT_KEYS_DIR}/active-certificate.pem.crt"
+  KEY_PATH="${AWS_CLIENT_KEYS_DIR}/active-private.pem.key"
+  echo "Using identity certificates from ${AWS_CLIENT_KEYS_DIR}"
+elif [ -f "${IDENTITY_DIR}/active-private.pem.key" ] && [ -f "${IDENTITY_DIR}/active-certificate.pem.crt" ]; then
   CERT_PATH="${IDENTITY_DIR}/active-certificate.pem.crt"
   KEY_PATH="${IDENTITY_DIR}/active-private.pem.key"
+  echo "Using identity certificates from ${IDENTITY_DIR}"
 fi
 
 jq --arg endpoint "${AWS_IOT_ENDPOINT:-}" \
-   --arg thing_name "${THING_NAME:-}" \
+   --arg serial_number "${SERIAL_NUMBER}" \
    --arg template_name "${FLEET_PROVISIONING_TEMPLATE:-}" \
-   --arg gate_type "${GATE_TYPE:-}" \
-   --arg gate_id "${FLARE_GATE_ID:-}" \
    --arg cert "${CERT_PATH}" \
    --arg key "${KEY_PATH}" '
   .cert = $cert
 | .key = $key
 | (if $endpoint != "" then .endpoint = $endpoint else . end)
-| (if $thing_name != "" then .["thing-name"] = $thing_name else . end)
+| (if $serial_number != "" then .["thing-name"] = $serial_number else . end)
 | (if $template_name != "" then .["fleet-provisioning"]["template-name"] = $template_name else . end)
-| (if ($thing_name != "" or $gate_type != "" or $gate_id != "") then
+| (if $serial_number != "" then
     .["fleet-provisioning"]["template-parameters"] = (
-      .["fleet-provisioning"]["template-parameters"]
-      | fromjson
-      | (if $thing_name != "" then .deviceId = $thing_name else . end)
-      | (if $gate_type  != "" then .gateType = $gate_type else . end)
-      | (if $gate_id    != "" then .gateId   = $gate_id else . end)
-      | tostring )
+      "{\"serialNumber\": \"" + $serial_number + "\"}" )
     else . end)
 ' "${TEMPLATE}" > "${OUT}.tmp"
 

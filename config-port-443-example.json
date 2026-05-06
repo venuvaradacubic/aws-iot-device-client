@@ -1,0 +1,25 @@
+{
+	"endpoint": "<replace_with_endpoint_value>",
+	"cert": "<replace_with_certificate_file_path>",
+	"key": "<replace_with_private_key_file_path>",
+	"root-ca": "<replace_with_root_ca_file_path>",
+	"thing-name": "<replace_with_thing_name>",
+	"mqtt-port": 443,
+	"mqtt-alpn": "x-amzn-mqtt-ca",
+	"logging": {
+		"level": "INFO",
+		"type": "FILE",
+		"file": "/var/log/aws-iot-device-client/aws-iot-device-client.log"
+	},
+	"jobs": {
+		"enabled": true,
+		"handler-directory": "<replace_with_job_handler_directory_path>"
+	},
+	"tunneling": {
+		"enabled": true
+	},
+	"device-defender": {
+		"enabled": true,
+		"interval": 300
+	}
+}

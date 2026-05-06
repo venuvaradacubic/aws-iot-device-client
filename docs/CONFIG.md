@@ -6,23 +6,23 @@
 ## Configuring the AWS IoT Device Client
 
 Configuration information can be passed to the AWS IoT Device Client through either the command line, a JSON configuration
-file, or both. For a complete list of available command line arguments, pass `--help` to the executable. 
+file, or both. For a complete list of available command line arguments, pass `--help` to the executable.
 
-Note: Parameters that are passed through the command line take precedence and overwrite any values that may have been written in the JSON configuration file. 
+Note: Parameters that are passed through the command line take precedence and overwrite any values that may have been written in the JSON configuration file.
 
-To configure the AWS IoT Device Client via the JSON configuration file, you can also modify our configuration template 
+To configure the AWS IoT Device Client via the JSON configuration file, you can also modify our configuration template
 `config-template.json` located in the root of this package and store it at `~/.aws-iot-device-client/aws-iot-device-client.conf`
 where `~/` refers to the home directory of the user running the Device Client. If you'd like to specify a different location
-for your configuration file, you can pass the `--config-file <your-path>` flag to the AWS IoT Device Client. 
+for your configuration file, you can pass the `--config-file <your-path>` flag to the AWS IoT Device Client.
 
-There are four (4) fields that MUST be passed to the AWS IoT Device Client through some combination of either CLI arguments, 
+There are four (4) fields that MUST be passed to the AWS IoT Device Client through some combination of either CLI arguments,
 JSON configuration, or both:
 
 `endpoint` *or* `--endpoint`: This is the IoT Core endpoint that your device should connect to. This can be found by navigating to the settings
-page under AWS IoT within the AWS Console under the subcategory "Custom Endpoint". You can also find the correct value for this 
-field by running `aws iot describe-endpoint` on the CLI. 
+page under AWS IoT within the AWS Console under the subcategory "Custom Endpoint". You can also find the correct value for this
+field by running `aws iot describe-endpoint` on the CLI.
 
-`cert` *or* `--cert`: If your devices certificates were provisioned manually, then this is the path to your device's public certificate. 
+`cert` *or* `--cert`: If your devices certificates were provisioned manually, then this is the path to your device's public certificate.
 
 `key` *or* `--key`: If your device's certificates were provisioned manually, then this is the path to your device's private key.
 
@@ -31,6 +31,22 @@ field by running `aws iot describe-endpoint` on the CLI.
 **Note:** If the `root-ca` *or* `--root-ca` file path is missing, Device Client will look for the ROOT-CA file stored on the IoT device. `root-ca` is no longer a mandatory field but we would recommend users to pass in the valid path to `root-ca` file via JSON or CLI config.
 
 **Note:** With a minimum configuration the Device Client by default will run with Jobs and SecureTunneling features enabled only.
+
+## Certificate Rotation
+
+The Device Client now supports optional automatic certificate rotation with Fleet Provisioning.
+
+`certificate-rotation.enabled`: Enables periodic certificate expiry checks and automatic renewal.
+
+`certificate-rotation.check-interval-seconds`: Frequency of expiry checks.
+
+`certificate-rotation.rotate-before-expiry-days`: Renewal threshold in days remaining before expiry.
+
+`certificate-rotation.failure-backoff-seconds`: Backoff delay after a failed renewal attempt.
+
+`certificate-rotation.startup-jitter-seconds`: Random startup delay to spread rotation checks across a fleet.
+
+Rotation currently requires `fleet-provisioning.enabled=true`. After a successful renewal, the process exits so a service manager can restart it on the refreshed identity.
 
 **Next**: [File and Directory Permission Requirements](PERMISSIONS.md)
 

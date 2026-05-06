@@ -92,6 +92,7 @@ namespace Aws
                 static constexpr char JSON_KEY_TUNNELING[] = "tunneling";
                 static constexpr char JSON_KEY_DEVICE_DEFENDER[] = "device-defender";
                 static constexpr char JSON_KEY_FLEET_PROVISIONING[] = "fleet-provisioning";
+                static constexpr char JSON_KEY_CERTIFICATE_ROTATION[] = "certificate-rotation";
                 static constexpr char JSON_KEY_RUNTIME_CONFIG[] = "runtime-config";
                 static constexpr char JSON_KEY_LOGGING[] = "logging";
 
@@ -291,6 +292,34 @@ namespace Aws
                     Aws::Crt::Optional<std::string> thingName;
                 };
                 FleetProvisioningRuntimeConfig fleetProvisioningRuntimeConfig;
+
+                struct CertificateRotation : public LoadableFromJsonAndCliAndEnvironment
+                {
+                    bool LoadFromJson(const Crt::JsonView &json) override;
+                    bool LoadFromCliArgs(const CliArgs &cliArgs) override;
+                    bool LoadFromEnvironment() override { return true; }
+                    bool Validate() const override;
+                    void SerializeToObject(Crt::JsonObject &object) const;
+
+                    static constexpr char CLI_ENABLE_CERTIFICATE_ROTATION[] = "--enable-certificate-rotation";
+                    static constexpr char CLI_CHECK_INTERVAL_SECONDS[] = "--certificate-rotation-check-interval-seconds";
+                    static constexpr char CLI_ROTATE_BEFORE_EXPIRY_DAYS[] = "--certificate-rotation-rotate-before-expiry-days";
+                    static constexpr char CLI_FAILURE_BACKOFF_SECONDS[] = "--certificate-rotation-failure-backoff-seconds";
+                    static constexpr char CLI_STARTUP_JITTER_SECONDS[] = "--certificate-rotation-startup-jitter-seconds";
+
+                    static constexpr char JSON_KEY_ENABLED[] = "enabled";
+                    static constexpr char JSON_KEY_CHECK_INTERVAL_SECONDS[] = "check-interval-seconds";
+                    static constexpr char JSON_KEY_ROTATE_BEFORE_EXPIRY_DAYS[] = "rotate-before-expiry-days";
+                    static constexpr char JSON_KEY_FAILURE_BACKOFF_SECONDS[] = "failure-backoff-seconds";
+                    static constexpr char JSON_KEY_STARTUP_JITTER_SECONDS[] = "startup-jitter-seconds";
+
+                    bool enabled{false};
+                    int checkIntervalSeconds{3600};
+                    int rotateBeforeExpiryDays{7};
+                    int failureBackoffSeconds{900};
+                    int startupJitterSeconds{0};
+                };
+                CertificateRotation certificateRotation;
 
                 struct HttpProxyConfig : public LoadableFromJsonAndCliAndEnvironment
                 {

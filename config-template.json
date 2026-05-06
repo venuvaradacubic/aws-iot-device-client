@@ -33,6 +33,13 @@
 		"csr-file": "<replace_with_csr_file_path>",
 		"device-key": "<replace_with_device_private_key_file_path>"
 	},
+	"certificate-rotation": {
+		"enabled": false,
+		"check-interval-seconds": 3600,
+		"rotate-before-expiry-days": 7,
+		"failure-backoff-seconds": 900,
+		"startup-jitter-seconds": 0
+	},
 	"samples": {
 		"pub-sub": {
 			"enabled": false,

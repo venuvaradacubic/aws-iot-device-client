@@ -63,6 +63,7 @@ constexpr char PlainConfig::JSON_KEY_JOBS[];
 constexpr char PlainConfig::JSON_KEY_TUNNELING[];
 constexpr char PlainConfig::JSON_KEY_DEVICE_DEFENDER[];
 constexpr char PlainConfig::JSON_KEY_FLEET_PROVISIONING[];
+constexpr char PlainConfig::JSON_KEY_CERTIFICATE_ROTATION[];
 constexpr char PlainConfig::JSON_KEY_RUNTIME_CONFIG[];
 constexpr char PlainConfig::JSON_KEY_SAMPLES[];
 constexpr char PlainConfig::JSON_KEY_PUB_SUB[];
@@ -196,6 +197,14 @@ bool PlainConfig::LoadFromJson(const Crt::JsonView &json)
         fleetProvisioning = temp;
     }
 
+    jsonKey = JSON_KEY_CERTIFICATE_ROTATION;
+    if (json.ValueExists(jsonKey))
+    {
+        CertificateRotation temp;
+        temp.LoadFromJson(json.GetJsonObject(jsonKey));
+        certificateRotation = temp;
+    }
+
     jsonKey = JSON_KEY_RUNTIME_CONFIG;
     if (json.ValueExists(jsonKey))
     {
@@ -316,7 +325,8 @@ bool PlainConfig::LoadFromCliArgs(const CliArgs &cliArgs)
 #if !defined(DISABLE_MQTT)
     loadFeatureCliArgs = loadFeatureCliArgs && jobs.LoadFromCliArgs(cliArgs) &&
                          deviceDefender.LoadFromCliArgs(cliArgs) && fleetProvisioning.LoadFromCliArgs(cliArgs) &&
-                         pubSub.LoadFromCliArgs(cliArgs) && sampleShadow.LoadFromCliArgs(cliArgs) &&
+                         certificateRotation.LoadFromCliArgs(cliArgs) && pubSub.LoadFromCliArgs(cliArgs) &&
+                         sampleShadow.LoadFromCliArgs(cliArgs) &&
                          configShadow.LoadFromCliArgs(cliArgs) && secureElement.LoadFromCliArgs(cliArgs);
 #endif
 #if defined(LOCAL_MQTT_BRIDGE)
@@ -344,7 +354,8 @@ bool PlainConfig::LoadFromEnvironment()
 #if !defined(DISABLE_MQTT)
     loadFeatureEnvironmentVar = loadFeatureEnvironmentVar && jobs.LoadFromEnvironment() &&
                                 deviceDefender.LoadFromEnvironment() && fleetProvisioning.LoadFromEnvironment() &&
-                                fleetProvisioningRuntimeConfig.LoadFromEnvironment() && pubSub.LoadFromEnvironment() &&
+                                fleetProvisioningRuntimeConfig.LoadFromEnvironment() &&
+                                certificateRotation.LoadFromEnvironment() && pubSub.LoadFromEnvironment() &&
                                 sampleShadow.LoadFromEnvironment() && configShadow.LoadFromEnvironment();
 #endif
     return loadFeatureEnvironmentVar;
@@ -424,6 +435,31 @@ bool PlainConfig::Validate() const
     {
         return false;
     }
+
+    if (!certificateRotation.Validate())
+    {
+        return false;
+    }
+
+#    if defined(DISABLE_MQTT) || defined(EXCLUDE_FP)
+    if (certificateRotation.enabled)
+    {
+        LOGM_ERROR(
+            Config::TAG,
+            "*** %s: Certificate Rotation is enabled but required features are not compiled into this binary ***",
+            DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+#    else
+    if (certificateRotation.enabled && !fleetProvisioning.enabled)
+    {
+        LOGM_ERROR(
+            Config::TAG,
+            "*** %s: Certificate Rotation requires Fleet Provisioning to be enabled ***",
+            DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+#    endif
 #endif
 #if !defined(EXCLUDE_PUBSUB) || !defined(DISABLE_MQTT)
     if (!pubSub.Validate())
@@ -501,6 +537,10 @@ void PlainConfig::SerializeToObject(Crt::JsonObject &object) const
     Crt::JsonObject fleetProvisioningObject;
     fleetProvisioning.SerializeToObject(fleetProvisioningObject);
     object.WithObject(JSON_KEY_FLEET_PROVISIONING, fleetProvisioningObject);
+
+    Crt::JsonObject certificateRotationObject;
+    certificateRotation.SerializeToObject(certificateRotationObject);
+    object.WithObject(JSON_KEY_CERTIFICATE_ROTATION, certificateRotationObject);
 
     if (fleetProvisioning.enabled)
     {
@@ -1420,6 +1460,186 @@ void PlainConfig::FleetProvisioningRuntimeConfig::SerializeToObject(Aws::Crt::Js
     {
         object.WithString(JSON_KEY_THING_NAME, thingName->c_str());
     }
+}
+
+constexpr char PlainConfig::CertificateRotation::CLI_ENABLE_CERTIFICATE_ROTATION[];
+constexpr char PlainConfig::CertificateRotation::CLI_CHECK_INTERVAL_SECONDS[];
+constexpr char PlainConfig::CertificateRotation::CLI_ROTATE_BEFORE_EXPIRY_DAYS[];
+constexpr char PlainConfig::CertificateRotation::CLI_FAILURE_BACKOFF_SECONDS[];
+constexpr char PlainConfig::CertificateRotation::CLI_STARTUP_JITTER_SECONDS[];
+
+constexpr char PlainConfig::CertificateRotation::JSON_KEY_ENABLED[];
+constexpr char PlainConfig::CertificateRotation::JSON_KEY_CHECK_INTERVAL_SECONDS[];
+constexpr char PlainConfig::CertificateRotation::JSON_KEY_ROTATE_BEFORE_EXPIRY_DAYS[];
+constexpr char PlainConfig::CertificateRotation::JSON_KEY_FAILURE_BACKOFF_SECONDS[];
+constexpr char PlainConfig::CertificateRotation::JSON_KEY_STARTUP_JITTER_SECONDS[];
+
+bool PlainConfig::CertificateRotation::LoadFromJson(const Crt::JsonView &json)
+{
+    const char *jsonKey = JSON_KEY_ENABLED;
+    if (json.ValueExists(jsonKey))
+    {
+        enabled = json.GetBool(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_CHECK_INTERVAL_SECONDS;
+    if (json.ValueExists(jsonKey))
+    {
+        checkIntervalSeconds = json.GetInteger(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_ROTATE_BEFORE_EXPIRY_DAYS;
+    if (json.ValueExists(jsonKey))
+    {
+        rotateBeforeExpiryDays = json.GetInteger(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_FAILURE_BACKOFF_SECONDS;
+    if (json.ValueExists(jsonKey))
+    {
+        failureBackoffSeconds = json.GetInteger(jsonKey);
+    }
+
+    jsonKey = JSON_KEY_STARTUP_JITTER_SECONDS;
+    if (json.ValueExists(jsonKey))
+    {
+        startupJitterSeconds = json.GetInteger(jsonKey);
+    }
+
+    return true;
+}
+
+bool PlainConfig::CertificateRotation::LoadFromCliArgs(const CliArgs &cliArgs)
+{
+    if (cliArgs.count(CLI_ENABLE_CERTIFICATE_ROTATION))
+    {
+        enabled = cliArgs.at(CLI_ENABLE_CERTIFICATE_ROTATION).compare("true") == 0;
+    }
+
+    if (cliArgs.count(CLI_CHECK_INTERVAL_SECONDS))
+    {
+        try
+        {
+            checkIntervalSeconds = stoi(cliArgs.at(CLI_CHECK_INTERVAL_SECONDS).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                CLI_CHECK_INTERVAL_SECONDS);
+            return false;
+        }
+    }
+
+    if (cliArgs.count(CLI_ROTATE_BEFORE_EXPIRY_DAYS))
+    {
+        try
+        {
+            rotateBeforeExpiryDays = stoi(cliArgs.at(CLI_ROTATE_BEFORE_EXPIRY_DAYS).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                CLI_ROTATE_BEFORE_EXPIRY_DAYS);
+            return false;
+        }
+    }
+
+    if (cliArgs.count(CLI_FAILURE_BACKOFF_SECONDS))
+    {
+        try
+        {
+            failureBackoffSeconds = stoi(cliArgs.at(CLI_FAILURE_BACKOFF_SECONDS).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                CLI_FAILURE_BACKOFF_SECONDS);
+            return false;
+        }
+    }
+
+    if (cliArgs.count(CLI_STARTUP_JITTER_SECONDS))
+    {
+        try
+        {
+            startupJitterSeconds = stoi(cliArgs.at(CLI_STARTUP_JITTER_SECONDS).c_str());
+        }
+        catch (const invalid_argument &)
+        {
+            LOGM_ERROR(
+                Config::TAG,
+                "*** %s: Failed to convert CLI argument {%s} to integer ***",
+                DeviceClient::DC_FATAL_ERROR,
+                CLI_STARTUP_JITTER_SECONDS);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool PlainConfig::CertificateRotation::Validate() const
+{
+    if (!enabled)
+    {
+        return true;
+    }
+
+    if (checkIntervalSeconds <= 0)
+    {
+        LOGM_ERROR(
+            Config::TAG,
+            "*** %s: certificate-rotation check-interval-seconds must be > 0 ***",
+            DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    if (rotateBeforeExpiryDays < 0)
+    {
+        LOGM_ERROR(
+            Config::TAG,
+            "*** %s: certificate-rotation rotate-before-expiry-days must be >= 0 ***",
+            DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    if (failureBackoffSeconds <= 0)
+    {
+        LOGM_ERROR(
+            Config::TAG,
+            "*** %s: certificate-rotation failure-backoff-seconds must be > 0 ***",
+            DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    if (startupJitterSeconds < 0)
+    {
+        LOGM_ERROR(
+            Config::TAG,
+            "*** %s: certificate-rotation startup-jitter-seconds must be >= 0 ***",
+            DeviceClient::DC_FATAL_ERROR);
+        return false;
+    }
+
+    return true;
+}
+
+void PlainConfig::CertificateRotation::SerializeToObject(Crt::JsonObject &object) const
+{
+    object.WithBool(JSON_KEY_ENABLED, enabled);
+    object.WithInteger(JSON_KEY_CHECK_INTERVAL_SECONDS, checkIntervalSeconds);
+    object.WithInteger(JSON_KEY_ROTATE_BEFORE_EXPIRY_DAYS, rotateBeforeExpiryDays);
+    object.WithInteger(JSON_KEY_FAILURE_BACKOFF_SECONDS, failureBackoffSeconds);
+    object.WithInteger(JSON_KEY_STARTUP_JITTER_SECONDS, startupJitterSeconds);
 }
 
 constexpr char PlainConfig::HttpProxyConfig::CLI_HTTP_PROXY_CONFIG_PATH[];

@@ -110,6 +110,11 @@ if (NOT EXCLUDE_FP)
     list(APPEND DC_SRC ${FP_SRC})
 endif ()
 
+if (NOT EXCLUDE_FP AND NOT DISABLE_MQTT)
+    file(GLOB CERT_ROTATION_SRC "source/certificate-rotation/*.cpp")
+    list(APPEND DC_SRC ${CERT_ROTATION_SRC})
+endif ()
+
 if (NOT EXCLUDE_SAMPLES)
     if (NOT EXCLUDE_PUBSUB)
         file(GLOB PUBSUB_SRC "source/samples/pubsub/*.cpp")
@@ -250,11 +255,11 @@ if (LOCAL_MQTT_BRIDGE)
     # Find libmosquitto
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
-    
+
     if(NOT MOSQUITTO_FOUND)
         message(FATAL_ERROR "libmosquitto is required for LOCAL_MQTT_BRIDGE feature. Install libmosquitto-dev or disable with -DLOCAL_MQTT_BRIDGE=OFF")
     endif()
-    
+
     # Add mosquitto libraries and include directories
     set(DEP_DC_LIBS ${DEP_DC_LIBS} ${MOSQUITTO_LIBRARIES})
     target_include_directories(${DC_PROJECT_NAME} PRIVATE ${MOSQUITTO_INCLUDE_DIRS})

@@ -43,6 +43,11 @@ if (NOT EXCLUDE_FP)
     list(APPEND DC_SRC ${FP_SRC})
 endif ()
 
+if (NOT EXCLUDE_FP AND NOT DISABLE_MQTT)
+    file(GLOB CERT_ROTATION_SRC "../source/certificate-rotation/*.cpp")
+    list(APPEND DC_SRC ${CERT_ROTATION_SRC})
+endif ()
+
 
 if (NOT EXCLUDE_SHADOW)
     if (NOT EXCLUDE_CONFIG_SHADOW)

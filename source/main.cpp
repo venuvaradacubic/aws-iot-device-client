@@ -27,6 +27,12 @@
 
 #endif
 
+#if !defined(EXCLUDE_FP) && !defined(DISABLE_MQTT)
+
+#    include "certificate-rotation/CertificateRotationFeature.h"
+
+#endif
+
 #include "logging/LoggerFactory.h"
 
 #if !defined(EXCLUDE_ST)
@@ -86,6 +92,9 @@ using namespace Aws::Iot::DeviceClient::SecureTunneling;
 #endif
 #if !defined(EXCLUDE_FP)
 using namespace Aws::Iot::DeviceClient::FleetProvisioningNS;
+#endif
+#if !defined(EXCLUDE_FP) && !defined(DISABLE_MQTT)
+using namespace Aws::Iot::DeviceClient::CertificateRotation;
 #endif
 #if !defined(EXCLUDE_SAMPLES)
 #    if !defined(EXCLUDE_PUBSUB)
@@ -547,6 +556,22 @@ int main(int argc, char *argv[])
         deviceClientAbort(
             "Invalid configuration. Device Defender configuration is enabled but feature is not compiled into binary.",
             EXIT_FAILURE);
+    }
+#endif
+
+#if !defined(EXCLUDE_FP) && !defined(DISABLE_MQTT)
+    if (config.config.certificateRotation.enabled)
+    {
+        shared_ptr<CertificateRotationFeature> certificateRotation;
+        LOG_INFO(TAG, "Certificate Rotation is enabled");
+        certificateRotation = make_shared<CertificateRotationFeature>();
+        certificateRotation->init(resourceManager, listener, config.config);
+        features->add(certificateRotation->getName(), certificateRotation);
+    }
+    else
+    {
+        LOG_INFO(TAG, "Certificate Rotation is disabled");
+        features->add(CertificateRotationFeature::NAME, nullptr);
     }
 #endif
 

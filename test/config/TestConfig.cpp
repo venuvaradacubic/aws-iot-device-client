@@ -83,6 +83,7 @@ class ConfigTestFixture : public ::testing::Test
         ASSERT_TRUE(config.jobs.enabled);
         ASSERT_TRUE(config.tunneling.enabled);
         ASSERT_FALSE(config.fleetProvisioning.enabled);
+        ASSERT_FALSE(config.certificateRotation.enabled);
         ASSERT_FALSE(config.deviceDefender.enabled);
         ASSERT_FALSE(config.sampleShadow.enabled);
         ASSERT_FALSE(config.sensorPublish.enabled);
@@ -1003,6 +1004,69 @@ TEST_F(ConfigTestFixture, FleetProvisioningCli)
     ASSERT_STREQ("{\"SerialNumber\": \"Device-SN\"}", config.fleetProvisioning.templateParameters->c_str());
     ASSERT_STREQ(filePath.c_str(), config.fleetProvisioning.csrFile->c_str());
     ASSERT_STREQ(filePath.c_str(), config.fleetProvisioning.deviceKey->c_str());
+#endif
+}
+
+TEST_F(ConfigTestFixture, CertificateRotationConfigFromJson)
+{
+    constexpr char jsonString[] = R"(
+{
+    "endpoint": "endpoint value",
+    "cert": "/tmp/aws-iot-device-client-test-file",
+    "root-ca": "/tmp/aws-iot-device-client-test/AmazonRootCA1.pem",
+    "key": "/tmp/aws-iot-device-client-test-file",
+    "thing-name": "thing-name value",
+    "fleet-provisioning": {
+        "enabled": true,
+        "template-name": "template-name"
+    },
+    "certificate-rotation": {
+        "enabled": true,
+        "check-interval-seconds": 120,
+        "rotate-before-expiry-days": 10,
+        "failure-backoff-seconds": 30,
+        "startup-jitter-seconds": 5
+    }
+})";
+
+    JsonObject jsonObject(jsonString);
+    JsonView jsonView = jsonObject.View();
+
+    PlainConfig config;
+    config.LoadFromJson(jsonView);
+
+    ASSERT_TRUE(config.Validate());
+    ASSERT_TRUE(config.certificateRotation.enabled);
+    ASSERT_EQ(120, config.certificateRotation.checkIntervalSeconds);
+    ASSERT_EQ(10, config.certificateRotation.rotateBeforeExpiryDays);
+    ASSERT_EQ(30, config.certificateRotation.failureBackoffSeconds);
+    ASSERT_EQ(5, config.certificateRotation.startupJitterSeconds);
+}
+
+TEST_F(ConfigTestFixture, CertificateRotationRequiresFleetProvisioning)
+{
+    constexpr char jsonString[] = R"(
+{
+    "endpoint": "endpoint value",
+    "cert": "/tmp/aws-iot-device-client-test-file",
+    "root-ca": "/tmp/aws-iot-device-client-test/AmazonRootCA1.pem",
+    "key": "/tmp/aws-iot-device-client-test-file",
+    "thing-name": "thing-name value",
+    "certificate-rotation": {
+        "enabled": true
+    }
+})";
+
+    JsonObject jsonObject(jsonString);
+    JsonView jsonView = jsonObject.View();
+
+    PlainConfig config;
+    config.LoadFromJson(jsonView);
+
+#if !defined(DISABLE_MQTT) && !defined(EXCLUDE_FP)
+    ASSERT_FALSE(config.Validate());
+#else
+    ASSERT_TRUE(config.Validate());
 #endif
 }
 
